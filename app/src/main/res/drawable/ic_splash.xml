@@ -1,26 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <group
-        android:pivotX="54"
-        android:pivotY="54"
-        android:scaleX="0.88"
-        android:scaleY="0.88">
-        <path
-            android:fillColor="#171717"
-            android:fillType="evenOdd"
-            android:pathData="M24,52C24,38 35,30 49,30C62,30 71,36 75,47C77,44 78,41 79,38C76,36 74,33 74,29C78,29 81,31 83,34C85,31 88,29 92,29C92,34 88,38 84,39C84,49 81,59 75,67C72,70 69,70 65,69C57,66 51,60 45,55C37,49 30,49 24,52ZM47.2,40A3.2,3.2 0,1 1,40.8 40A3.2,3.2 0,0 1,47.2 40ZM64.2,40A3.2,3.2 0,1 1,57.8 40A3.2,3.2 0,0 1,64.2 40Z" />
-        <path
-            android:fillColor="#171717"
-            android:pathData="M24,53C25,70 37,80 53,80C62,80 70,77 76,72L70,67C66,71 60,73 54,73C43,73 34,66 32,56C29,54 26,53 24,53Z" />
-        <path
-            android:fillColor="@android:color/transparent"
-            android:pathData="M40,31L36,22M62,31L66,22"
-            android:strokeColor="#171717"
-            android:strokeLineCap="round"
-            android:strokeWidth="4" />
-    </group>
-</vector>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/android_whale_foreground"
+    android:antialias="true"
+    android:filter="true"
+    android:gravity="fill" />

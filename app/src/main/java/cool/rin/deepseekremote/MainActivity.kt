@@ -56,6 +56,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
     private var serverUrl: String? = null
@@ -1017,8 +1018,14 @@ class MainActivity : Activity() {
                 setOnClickListener { anchor -> showDrawerSettings(anchor) }
             }, LinearLayout.LayoutParams(MATCH, dp(50)).apply { topMargin = dp(6) })
         }
-        drawerOverlay.addView(drawerPanel, FrameLayout.LayoutParams(dp(DRAWER_WIDTH_DP), MATCH, Gravity.START))
+        drawerOverlay.addView(drawerPanel, FrameLayout.LayoutParams(drawerWidthPx(), MATCH, Gravity.START))
         return drawerOverlay
+    }
+
+    private fun drawerWidthPx(): Int {
+        val viewportWidth = drawerOverlay.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        return (viewportWidth * DRAWER_WIDTH_FRACTION).roundToInt()
     }
 
     private fun drawerIconButton(icon: Int, description: String, action: () -> Unit) = ImageButton(this).apply {
@@ -2142,8 +2149,12 @@ class MainActivity : Activity() {
         composer.clearFocus()
         hideKeyboard()
         renderSessionList()
+        val drawerWidth = drawerWidthPx()
+        drawerPanel.layoutParams = (drawerPanel.layoutParams as FrameLayout.LayoutParams).apply {
+            width = drawerWidth
+        }
         drawerOverlay.visibility = View.VISIBLE
-        drawerPanel.translationX = -dp(DRAWER_WIDTH_DP).toFloat()
+        drawerPanel.translationX = -drawerWidth.toFloat()
         drawerPanel.animate().translationX(0f).setDuration(180).start()
         worker.execute {
             val latest = runCatching { api.workspaces() }.getOrDefault(emptyList())
@@ -2316,7 +2327,8 @@ class MainActivity : Activity() {
 
     private fun closeDrawer() {
         if (drawerOverlay.visibility != View.VISIBLE) return
-        drawerPanel.animate().translationX(-dp(DRAWER_WIDTH_DP).toFloat()).setDuration(160).withEndAction {
+        val drawerWidth = drawerPanel.width.takeIf { it > 0 } ?: drawerWidthPx()
+        drawerPanel.animate().translationX(-drawerWidth.toFloat()).setDuration(160).withEndAction {
             drawerOverlay.visibility = View.GONE
         }.start()
     }
@@ -3208,7 +3220,7 @@ class MainActivity : Activity() {
         private const val EXTRA_DEBUG_CONTROLS_PREVIEW = "debug_controls_preview"
         private const val EXTRA_DEBUG_APPROVAL_PREVIEW = "debug_approval_preview"
         private const val EXTRA_DEBUG_ACTIVITY_PREVIEW = "debug_activity_preview"
-        private const val DRAWER_WIDTH_DP = 350
+        private const val DRAWER_WIDTH_FRACTION = 0.86f
         private const val PREF_DEFAULT_WORKSPACE_ID = "default_workspace_id"
         private const val PREF_DRAWER_GROUP_WORKSPACE = "drawer_group_workspace"
         private const val PREF_DRAWER_ORDER_UPDATED = "drawer_order_updated"
