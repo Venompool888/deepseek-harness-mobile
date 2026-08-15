@@ -2,6 +2,11 @@ plugins {
     id("com.android.application")
 }
 
+val releaseStoreFile = providers.environmentVariable("DEEPSEEK_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("DEEPSEEK_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("DEEPSEEK_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("DEEPSEEK_RELEASE_KEY_PASSWORD").orNull
+
 android {
     namespace = "cool.rin.deepseekremote"
     compileSdk = 36
@@ -18,6 +23,17 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -26,6 +42,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
