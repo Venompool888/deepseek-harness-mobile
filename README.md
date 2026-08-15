@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="design/android-whale-foreground.png" width="260" alt="DeepSeek Harness Mobile logo">
+  <img src="design/android-whale-logo-white.png" width="260" alt="DeepSeek Harness Mobile logo">
 </p>
 
 <h1 align="center">DeepSeek Harness Mobile</h1>
@@ -17,7 +17,7 @@
 本流程已在 **OPPO CPH2797（Android 16 / ColorOS 16）** 上实际验证。
 
 1. 在手机 Chrome 中打开 [Latest Release](https://github.com/Venompool888/deepseek-harness-mobile/releases/latest)。
-2. 找到 **Assets**，点击 `deepseek-harness-mobile-v1.0.0.apk` 下载。
+2. 找到 **Assets**，点击 `deepseek-harness-mobile-v1.0.1.apk` 下载。
 3. 下载完成后打开 APK，并按 ColorOS 的安装提示继续。如果系统阻止安装来自浏览器的应用，请按系统提示临时允许当前浏览器安装未知应用，然后返回继续安装。
 4. 安装完成后打开 **DeepSeek Harness Mobile**。
 
@@ -25,7 +25,7 @@
   <img src="docs/images/oppo/01-github-release-apk.png" width="320" alt="在 OPPO 手机上从 GitHub Release 下载 APK">
 </p>
 
-> 当前 v1.0.0 APK 的 SHA-256：`42b30eefcb7580206f8995eea209ced0b6cf4cb2ac5d907c8ebbc17a75105ee0`
+> 当前 v1.0.1 APK 的 SHA-256：`69307f465bef93d0c359950f2b1e7f94a951177ea1c96f0845aaf49f3b667bf9`
 
 ## 首次连接
 
