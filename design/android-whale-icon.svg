@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-label="DeepSeek Harness Mobile whale logo">
+  <rect width="108" height="108" fill="#FFFFFF"/>
+  <g transform="translate(54 54) scale(.88) translate(-54 -54)">
+    <path
+      fill="#171717"
+      fill-rule="evenodd"
+      d="M24 52C24 38 35 30 49 30C62 30 71 36 75 47C77 44 78 41 79 38C76 36 74 33 74 29C78 29 81 31 83 34C85 31 88 29 92 29C92 34 88 38 84 39C84 49 81 59 75 67C72 70 69 70 65 69C57 66 51 60 45 55C37 49 30 49 24 52ZM47.2 40A3.2 3.2 0 1 1 40.8 40A3.2 3.2 0 0 1 47.2 40ZM64.2 40A3.2 3.2 0 1 1 57.8 40A3.2 3.2 0 0 1 64.2 40Z"/>
+    <path
+      fill="#171717"
+      d="M24 53C25 70 37 80 53 80C62 80 70 77 76 72L70 67C66 71 60 73 54 73C43 73 34 66 32 56C29 54 26 53 24 53Z"/>
+    <path
+      d="M40 31L36 22M62 31L66 22"
+      fill="none"
+      stroke="#171717"
+      stroke-linecap="round"
+      stroke-width="4"/>
+  </g>
+</svg>

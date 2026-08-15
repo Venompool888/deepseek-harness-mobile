@@ -1,0 +1,20 @@
+# Local environment secrets
+.env
+
+# Android and Gradle local output
+.gradle/
+local.properties
+**/build/
+*.iml
+.idea/
+captures/
+
+# Local QA evidence and private device/session captures
+artifacts/
+runs/
+design-qa.md
+chatgpt-interaction-audit.md
+test-fixtures/
+
+# OS and editor noise
+.DS_Store

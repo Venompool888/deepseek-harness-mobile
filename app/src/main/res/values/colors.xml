@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_background">#F6F8FA</color>
+    <color name="deepseek_navy">#0B1F33</color>
+    <color name="deepseek_blue">#2563EB</color>
+    <color name="white">#FFFFFF</color>
+</resources>
