@@ -1,13 +1,16 @@
 package cool.rin.deepseekremote
 
 import android.annotation.SuppressLint
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -61,6 +64,9 @@ import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
+    private var themePreference = AppThemePreference.DARK
+    private var darkTheme = true
+    private lateinit var palette: AppPalette
     private var serverUrl: String? = null
     private val api = HarnessApi(baseUrl = { serverUrl ?: throw IOException("尚未配置 Harness 服务器") })
     private val worker = Executors.newSingleThreadExecutor()
@@ -99,6 +105,7 @@ class MainActivity : Activity() {
     private var drawerOrderLastUpdated = true
     private val manuallyExpandedWorkspaceKeys = mutableSetOf<String>()
     private var currentSession: HarnessApi.Session? = null
+    private var pendingOpenSessionId: String? = null
     private var currentModels: HarnessApi.Models? = null
     private var currentControls = HarnessApi.SessionControls()
     private var currentStats = HarnessApi.ConversationStats()
@@ -152,6 +159,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).let { prefs ->
+            themePreference = AppThemePreference.fromStored(prefs.getString(PREF_THEME, null))
+            darkTheme = themePreference.resolvesDark(systemDarkAppearance())
+            palette = if (darkTheme) AppPalettes.DARK else AppPalettes.LIGHT
             drawerGroupByWorkspace = prefs.getBoolean(PREF_DRAWER_GROUP_WORKSPACE, true)
             drawerOrderLastUpdated = prefs.getBoolean(PREF_DRAWER_ORDER_UPDATED, true)
             serverUrl = prefs.getString(PREF_SERVER_URL, null)?.let { saved ->
@@ -162,8 +172,10 @@ class MainActivity : Activity() {
         debugControlsPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_CONTROLS_PREVIEW, false)
         debugApprovalPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_APPROVAL_PREVIEW, false)
         debugActivityPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_ACTIVITY_PREVIEW, false)
+        pendingOpenSessionId = intent.getStringExtra(TaskMonitorService.EXTRA_OPEN_SESSION_ID)
         configureWindow()
         setContentView(buildScreen())
+        requestNotificationPermissionIfNeeded()
         configureAuthWebView()
         configureBackNavigation()
         when {
@@ -173,6 +185,15 @@ class MainActivity : Activity() {
             debugTodoPreview -> renderDebugTodoPreview()
             serverUrl == null -> showServerSetup()
             else -> refresh(showSpinner = true)
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (themePreference == AppThemePreference.SYSTEM &&
+            darkTheme != themePreference.resolvesDark(systemDarkAppearance(newConfig))
+        ) {
+            recreate()
         }
     }
 
@@ -231,6 +252,10 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        intent.getStringExtra(TaskMonitorService.EXTRA_OPEN_SESSION_ID)?.let {
+            pendingOpenSessionId = it
+            refresh(showSpinner = true)
+        }
         if (BuildConfig.DEBUG && (
                 intent.hasExtra(EXTRA_DEBUG_TODO_PREVIEW) ||
                     intent.hasExtra(EXTRA_DEBUG_CONTROLS_PREVIEW) ||
@@ -433,7 +458,11 @@ class MainActivity : Activity() {
     private fun configureWindow() {
         window.statusBarColor = COLOR_SURFACE
         window.navigationBarColor = COLOR_SURFACE
-        window.decorView.systemUiVisibility = 0
+        window.decorView.systemUiVisibility = if (darkTheme) {
+            0
+        } else {
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
     }
 
     private fun buildScreen(): View {
@@ -862,8 +891,8 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         isEnabled = enabledNow
         alpha = if (enabledNow) 1f else .55f
-        setTextColor(if (primary) Color.rgb(24, 24, 24) else COLOR_TEXT)
-        background = if (primary) rounded(Color.rgb(246, 246, 246), 22f)
+        setTextColor(if (primary) palette.primaryButtonText else COLOR_TEXT)
+        background = if (primary) rounded(palette.primaryButtonFill, 22f)
         else roundedStroke(Color.TRANSPARENT, COLOR_BORDER, 22f)
         setOnClickListener { if (isEnabled) action() }
     }
@@ -937,61 +966,45 @@ class MainActivity : Activity() {
         }
         drawerPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(14), dp(12), dp(12))
+            setPadding(dp(5), dp(2), dp(5), dp(6))
             setBackgroundColor(COLOR_DRAWER)
             isClickable = true
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = "deepseek"
-                    textSize = 19f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_TEXT)
-                    includeFontPadding = false
-                    gravity = Gravity.CENTER_VERTICAL
-                }, LinearLayout.LayoutParams(WRAP, dp(48)))
-                addView(TextView(this@MainActivity).apply {
-                    text = "HARNESS"
-                    textSize = 9f
-                    typeface = Typeface.DEFAULT_BOLD
-                    letterSpacing = .08f
-                    setTextColor(COLOR_DRAWER)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    background = rounded(COLOR_TEXT, 3f)
-                    setPadding(dp(6), 0, dp(6), 0)
-                }, LinearLayout.LayoutParams(WRAP, dp(22)).apply {
-                    marginStart = dp(8)
-                })
+                setPadding(dp(2), dp(8), 0, dp(8))
+                addView(buildDrawerBrand(), LinearLayout.LayoutParams(dp(182), dp(24)))
                 addView(android.widget.Space(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
-                addView(drawerIconButton(R.drawable.ic_sidebar_outline, "关闭侧栏") { closeDrawer() }, LinearLayout.LayoutParams(dp(40), dp(40)))
-            }, LinearLayout.LayoutParams(MATCH, dp(56)))
+                addView(drawerIconButton(R.drawable.ic_sidebar_outline, "关闭侧栏") { closeDrawer() })
+            }, LinearLayout.LayoutParams(MATCH, dp(60)).apply { bottomMargin = dp(8) })
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
                 isClickable = true
                 isFocusable = true
-                background = roundedStroke(COLOR_MENU_SELECTED, COLOR_BORDER, 12f)
+                background = roundedStroke(COLOR_DRAWER_BUTTON, COLOR_DRAWER_BORDER, 12f)
                 contentDescription = "New Session"
                 setOnClickListener { closeDrawer(); showNewSession() }
                 addView(ImageView(this@MainActivity).apply {
-                    setImageResource(R.drawable.ic_add_outline)
-                    imageTintList = ColorStateList.valueOf(COLOR_TEXT)
-                }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) })
+                    setImageResource(R.drawable.ic_new_session_harness)
+                    imageTintList = ColorStateList.valueOf(COLOR_DRAWER_PRIMARY)
+                }, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(6) })
                 addView(TextView(this@MainActivity).apply {
                     text = "New Session"
                     textSize = 14f
-                    setTextColor(COLOR_TEXT)
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(COLOR_DRAWER_PRIMARY)
                     includeFontPadding = false
                     gravity = Gravity.CENTER
                 }, LinearLayout.LayoutParams(WRAP, MATCH))
-            }, LinearLayout.LayoutParams(MATCH, dp(48)).apply {
-                topMargin = dp(6)
-                bottomMargin = dp(14)
+            }, LinearLayout.LayoutParams(MATCH, dp(38)).apply {
+                bottomMargin = dp(8)
             })
             drawerToolbarHost = FrameLayout(this@MainActivity)
-            addView(drawerToolbarHost, LinearLayout.LayoutParams(MATCH, dp(40)))
+            addView(drawerToolbarHost, LinearLayout.LayoutParams(MATCH, dp(36)).apply {
+                topMargin = dp(2)
+                bottomMargin = dp(4)
+            })
             renderDrawerToolbar()
             sessionList = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
             addView(ScrollView(this@MainActivity).apply {
@@ -1001,15 +1014,20 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Settings"
                 textSize = 14f
-                setTextColor(COLOR_TEXT)
+                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                setTextColor(COLOR_DRAWER_PRIMARY)
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(6), 0, dp(6), 0)
+                includeFontPadding = false
+                setPadding(dp(10), 0, dp(2), 0)
                 setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_settings_outline, 0, 0, 0)
-                compoundDrawablePadding = dp(12)
-                compoundDrawableTintList = ColorStateList.valueOf(COLOR_TEXT)
+                compoundDrawablePadding = dp(8)
+                compoundDrawableTintList = ColorStateList.valueOf(COLOR_DRAWER_PRIMARY)
                 isClickable = true
                 setOnClickListener { anchor -> showDrawerSettings(anchor) }
-            }, LinearLayout.LayoutParams(MATCH, dp(50)).apply { topMargin = dp(6) })
+            }, LinearLayout.LayoutParams(MATCH, dp(34)).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            })
         }
         drawerOverlay.addView(drawerPanel, FrameLayout.LayoutParams(drawerWidthPx(), MATCH, Gravity.START))
         return drawerOverlay
@@ -1019,18 +1037,65 @@ class MainActivity : Activity() {
         val viewportWidth = drawerOverlay.width.takeIf { it > 0 }
             ?: resources.displayMetrics.widthPixels
         return (viewportWidth * DRAWER_WIDTH_FRACTION).roundToInt()
+            .coerceAtMost(dp(DRAWER_MAX_WIDTH_DP))
     }
 
-    private fun drawerIconButton(icon: Int, description: String, action: () -> Unit) = ImageButton(this).apply {
+    private fun drawerIconButton(
+        icon: Int,
+        description: String,
+        startMarginDp: Int = 0,
+        action: () -> Unit,
+    ) = ImageButton(this).apply {
         setImageResource(icon)
-        imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
+        imageTintList = ColorStateList.valueOf(COLOR_DRAWER_SECONDARY)
         background = null
         contentDescription = description
-        setPadding(dp(9), dp(9), dp(9), dp(9))
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+        minimumWidth = 0
+        minimumHeight = 0
         isClickable = true
         isFocusable = true
         setOnClickListener { action() }
-        layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
+        layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            marginStart = dp(startMarginDp)
+        }
+    }
+
+    private fun buildDrawerBrand(): View {
+        if (darkTheme) {
+            return ImageView(this).apply {
+                setImageResource(R.drawable.deepseek_harness_wordmark)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = "DeepSeek Harness"
+            }
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = "DeepSeek Harness"
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_notification_harness)
+                imageTintList = ColorStateList.valueOf(COLOR_DRAWER_PRIMARY)
+            }, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(5) })
+            addView(TextView(this@MainActivity).apply {
+                text = "deepseek"
+                textSize = 19f
+                typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                setTextColor(COLOR_DRAWER_PRIMARY)
+                includeFontPadding = false
+            }, LinearLayout.LayoutParams(WRAP, WRAP))
+            addView(TextView(this@MainActivity).apply {
+                text = "HARNESS"
+                textSize = 8f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                letterSpacing = .08f
+                setTextColor(COLOR_SURFACE)
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                background = rounded(COLOR_DRAWER_PRIMARY, 3f)
+                setPadding(dp(5), 0, dp(5), 0)
+            }, LinearLayout.LayoutParams(WRAP, dp(20)).apply { marginStart = dp(6) })
+        }
     }
 
     private fun renderDrawerToolbar() {
@@ -1040,10 +1105,10 @@ class MainActivity : Activity() {
             val search = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = roundedStroke(Color.TRANSPARENT, COLOR_BORDER, 10f)
+                background = roundedStroke(Color.TRANSPARENT, COLOR_DRAWER_BORDER, 10f)
                 addView(ImageView(this@MainActivity).apply {
                     setImageResource(R.drawable.ic_search_outline)
-                    imageTintList = ColorStateList.valueOf(COLOR_MUTED)
+                    imageTintList = ColorStateList.valueOf(COLOR_DRAWER_TERTIARY)
                     setPadding(dp(7), dp(7), dp(7), dp(7))
                 }, LinearLayout.LayoutParams(dp(32), dp(32)))
                 val input = EditText(this@MainActivity).apply {
@@ -1051,8 +1116,8 @@ class MainActivity : Activity() {
                     setText(drawerSearchQuery)
                     setSingleLine(true)
                     textSize = 13f
-                    setTextColor(COLOR_TEXT)
-                    setHintTextColor(COLOR_MUTED)
+                    setTextColor(COLOR_DRAWER_PRIMARY)
+                    setHintTextColor(COLOR_DRAWER_TERTIARY)
                     background = null
                     setPadding(0, 0, 0, 0)
                     addTextChangedListener(object : TextWatcher {
@@ -1071,7 +1136,7 @@ class MainActivity : Activity() {
                     hideKeyboard()
                     renderDrawerToolbar()
                     renderSessionList()
-                }, LinearLayout.LayoutParams(dp(36), dp(36)))
+                })
                 mainHandler.post {
                     input.requestFocus()
                     input.setSelection(input.text.length)
@@ -1079,7 +1144,7 @@ class MainActivity : Activity() {
                         .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
                 }
             }
-            drawerToolbarHost.addView(search, FrameLayout.LayoutParams(MATCH, dp(38), Gravity.CENTER_VERTICAL))
+            drawerToolbarHost.addView(search, FrameLayout.LayoutParams(MATCH, dp(30), Gravity.CENTER_VERTICAL))
             return
         }
 
@@ -1088,22 +1153,23 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@MainActivity).apply {
                 text = "Workspaces"
-                textSize = 13f
-                setTextColor(COLOR_MUTED)
+                textSize = 14f
+                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                setTextColor(COLOR_DRAWER_TERTIARY)
                 gravity = Gravity.CENTER_VERTICAL
                 includeFontPadding = false
-            }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(2) })
-            addView(drawerIconButton(R.drawable.ic_search_outline, "Search sessions") {
+            }, LinearLayout.LayoutParams(0, dp(36), 1f).apply { marginStart = dp(2) })
+            addView(drawerIconButton(R.drawable.ic_search_outline, "Search sessions", startMarginDp = 4) {
                 drawerSearchExpanded = true
                 renderDrawerToolbar()
             })
-            val viewOptions = drawerIconButton(R.drawable.ic_tune_outline, "View options") {}
+            val viewOptions = drawerIconButton(R.drawable.ic_tune_outline, "View options", startMarginDp = 4) {}
             viewOptions.setOnClickListener { showDrawerViewOptions(viewOptions) }
             addView(viewOptions)
-            addView(drawerIconButton(R.drawable.ic_folder_add_outline, "Add workspace") {
+            addView(drawerIconButton(R.drawable.ic_folder_add_outline, "Add workspace", startMarginDp = 4) {
                 showAddWorkspaceDialog()
             })
-        }, FrameLayout.LayoutParams(MATCH, dp(40), Gravity.CENTER_VERTICAL))
+        }, FrameLayout.LayoutParams(MATCH, dp(36), Gravity.CENTER_VERTICAL))
     }
 
     private fun showDrawerViewOptions(anchor: View) {
@@ -1212,9 +1278,9 @@ class MainActivity : Activity() {
             text = "Open"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.BLACK)
+            setTextColor(palette.primaryButtonText)
             gravity = Gravity.CENTER
-            background = rounded(Color.WHITE, 18f)
+            background = rounded(palette.primaryButtonFill, 18f)
             isClickable = true
         }
         val actionBar = LinearLayout(this).apply {
@@ -1447,6 +1513,9 @@ class MainActivity : Activity() {
         addSettingsRow(R.drawable.ic_terminal_harness, "Server connection") {
             showServerSetup()
         }
+        addSettingsRow(R.drawable.ic_appearance_outline, "Appearance") {
+            showAppearanceDialog()
+        }
         addSettingsRow(R.drawable.ic_settings_outline, "Web Settings") {
             serverUrl?.let { openExternal(Uri.parse(it)) }
         }
@@ -1458,6 +1527,103 @@ class MainActivity : Activity() {
             showAtLocation(anchor, Gravity.START or Gravity.BOTTOM, dp(16), dp(68))
         }
     }
+
+    private fun showAppearanceDialog() {
+        val dialog = Dialog(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(18))
+            background = roundedStroke(COLOR_WEB_SETTINGS, COLOR_WEB_SETTINGS_BORDER, 18f)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = "Appearance"
+                    textSize = 17f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(COLOR_TEXT)
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(0, dp(42), 1f))
+                addView(ImageButton(this@MainActivity).apply {
+                    setImageResource(R.drawable.ic_close_outline)
+                    imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
+                    background = null
+                    contentDescription = "Close appearance"
+                    setPadding(dp(10), dp(10), dp(10), dp(10))
+                    setOnClickListener { dialog.dismiss() }
+                }, LinearLayout.LayoutParams(dp(40), dp(40)))
+            }, LinearLayout.LayoutParams(MATCH, dp(42)))
+        }
+
+        val choices = listOf(
+            Triple(AppThemePreference.LIGHT, "Light", R.drawable.ic_theme_light),
+            Triple(AppThemePreference.DARK, "Dark", R.drawable.ic_theme_dark),
+            Triple(AppThemePreference.SYSTEM, "System", R.drawable.ic_theme_system),
+        )
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        choices.forEachIndexed { index, (preference, label, icon) ->
+            val selected = preference == themePreference
+            row.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                contentDescription = "$label theme${if (selected) ", selected" else ""}"
+                background = roundedStroke(
+                    if (selected) COLOR_SELECTED else Color.TRANSPARENT,
+                    if (selected) COLOR_DRAWER_TERTIARY else COLOR_BORDER,
+                    14f,
+                )
+                addView(ImageView(this@MainActivity).apply {
+                    setImageResource(icon)
+                    imageTintList = ColorStateList.valueOf(COLOR_TEXT)
+                }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { bottomMargin = dp(6) })
+                addView(TextView(this@MainActivity).apply {
+                    text = label
+                    textSize = 12f
+                    setTextColor(COLOR_TEXT)
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(WRAP, WRAP))
+                setOnClickListener {
+                    dialog.dismiss()
+                    setThemePreference(preference)
+                }
+            }, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
+                if (index > 0) marginStart = dp(8)
+            })
+        }
+        panel.addView(TextView(this).apply {
+            text = "Appearance"
+            textSize = 13f
+            setTextColor(COLOR_MUTED)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(MATCH, dp(34)))
+        panel.addView(row, LinearLayout.LayoutParams(MATCH, dp(82)))
+
+        dialog.setContentView(panel)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            dialog.window?.setLayout((resources.displayMetrics.widthPixels - dp(32)).coerceAtMost(dp(520)), WRAP)
+        }
+        dialog.show()
+    }
+
+    private fun setThemePreference(preference: AppThemePreference) {
+        if (themePreference == preference) return
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putString(PREF_THEME, preference.storedValue)
+            .apply()
+        recreate()
+    }
+
+    private fun systemDarkAppearance(configuration: Configuration = resources.configuration): Boolean =
+        configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
     private fun showServerSetup() {
         val required = serverUrl == null
@@ -1476,7 +1642,7 @@ class MainActivity : Activity() {
         }
         val errorView = TextView(this).apply {
             textSize = 12f
-            setTextColor(Color.rgb(255, 120, 120))
+            setTextColor(COLOR_RED)
             visibility = View.GONE
             setPadding(0, dp(10), 0, 0)
         }
@@ -1545,7 +1711,7 @@ class MainActivity : Activity() {
                         mainHandler.post {
                             connectButton.isEnabled = true
                             addressInput.isEnabled = true
-                            errorView.setTextColor(Color.rgb(255, 120, 120))
+                            errorView.setTextColor(COLOR_RED)
                             errorView.text = error.message ?: "无法连接或服务器不是兼容的 Harness"
                         }
                     }
@@ -1577,23 +1743,25 @@ class MainActivity : Activity() {
             lastRenderedSignature = ""
         }
         if (!paused) mainHandler.postDelayed(poll, 1_000)
+        requestNotificationPermissionIfNeeded()
     }
 
     private fun workspaceHeader(title: String, active: Boolean, expanded: Boolean, onToggle: () -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(6), 0, dp(6), 0)
+        setPadding(dp(8), 0, dp(8), 0)
         isClickable = true
         isFocusable = true
         setOnClickListener { onToggle() }
         addView(ImageView(this@MainActivity).apply {
             setImageResource(R.drawable.ic_folder_web_open)
-            imageTintList = ColorStateList.valueOf(if (active) COLOR_BLUE else COLOR_MUTED)
-        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) })
+            imageTintList = ColorStateList.valueOf(if (active) COLOR_DRAWER_BLUE else COLOR_DRAWER_TERTIARY)
+        }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) })
         addView(TextView(this@MainActivity).apply {
             text = title
-            textSize = 13f
-            setTextColor(COLOR_TEXT)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            setTextColor(COLOR_DRAWER_PRIMARY)
             gravity = Gravity.CENTER_VERTICAL
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -1601,10 +1769,10 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, MATCH, 1f))
         addView(ImageView(this@MainActivity).apply {
             setImageResource(R.drawable.ic_workspace_chevron_web)
-            imageTintList = ColorStateList.valueOf(COLOR_MUTED)
+            imageTintList = ColorStateList.valueOf(COLOR_DRAWER_TERTIARY)
             rotation = if (expanded) 90f else 0f
         }, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) })
-        layoutParams = LinearLayout.LayoutParams(MATCH, dp(42)).apply { topMargin = dp(4) }
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(34))
     }
 
     private fun refresh(showSpinner: Boolean) {
@@ -1619,7 +1787,9 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 val newSessions = api.sessions()
-                val selected = newSessions.firstOrNull { it.id == selectedId }
+                val requestedId = pendingOpenSessionId
+                val selected = newSessions.firstOrNull { it.id == requestedId }
+                    ?: newSessions.firstOrNull { it.id == selectedId }
                     ?: newSessions.firstOrNull { !it.blank }
                     ?: newSessions.firstOrNull()
                 val history = selected?.let { api.history(it.id) }
@@ -1632,6 +1802,8 @@ class MainActivity : Activity() {
                     progress.visibility = View.GONE
                     hideAuth()
                     sessions = newSessions
+                    if (selected?.id == pendingOpenSessionId) pendingOpenSessionId = null
+                    if (!paused) serverUrl?.let { TaskMonitorService.watch(this, it, newSessions) }
                     val keptStart = runningStartedAt.takeIf { currentSession?.id == selected?.id && currentSession?.running == true }
                     if (currentSession?.id != selected?.id) todosExpanded = false
                     currentSession = selected
@@ -2012,7 +2184,14 @@ class MainActivity : Activity() {
         if (text.isNotEmpty()) {
             val newestStart = text.length - Character.charCount(Character.codePointBefore(text, text.length))
             text.setSpan(
-                ForegroundColorSpan(Color.argb(STREAM_NEWEST_ALPHA, 244, 244, 244)),
+                ForegroundColorSpan(
+                    Color.argb(
+                        STREAM_NEWEST_ALPHA,
+                        Color.red(COLOR_TEXT),
+                        Color.green(COLOR_TEXT),
+                        Color.blue(COLOR_TEXT),
+                    ),
+                ),
                 newestStart,
                 text.length,
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -2087,8 +2266,12 @@ class MainActivity : Activity() {
                 api.prompt(session.id, content, promptMode)
                 mainHandler.post {
                     setComposerEnabled(true)
-                    currentSession = currentSession?.copy(running = true, blank = false)
+                    val startedSession = currentSession?.copy(running = true, blank = false)
+                    currentSession = startedSession
                     runningStartedAt = System.currentTimeMillis()
+                    if (!paused && startedSession != null) {
+                        serverUrl?.let { TaskMonitorService.watch(this, it, listOf(startedSession), runningStartedAt!!) }
+                    }
                     updateStatus("运行中", STATUS_CONNECTED)
                     refresh(showSpinner = false)
                 }
@@ -2229,7 +2412,7 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(34), 0, dp(10), 0)
-        background = if (session.id == currentSession?.id) rounded(COLOR_SELECTED, 8f) else null
+        background = if (session.id == currentSession?.id) rounded(COLOR_DRAWER_SELECTED, 8f) else null
         isClickable = true
         isFocusable = true
         setOnClickListener {
@@ -2240,8 +2423,9 @@ class MainActivity : Activity() {
         setOnLongClickListener { showSessionActions(session); true }
         addView(TextView(this@MainActivity).apply {
             text = session.title ?: session.cwd?.substringAfterLast('/') ?: "Untitled"
-            textSize = 13f
-            setTextColor(COLOR_TEXT)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            setTextColor(COLOR_DRAWER_PRIMARY)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
@@ -2250,11 +2434,11 @@ class MainActivity : Activity() {
         addView(TextView(this@MainActivity).apply {
             text = relativeSessionAge(session.updatedAt)
             textSize = 12f
-            setTextColor(COLOR_MUTED)
+            setTextColor(COLOR_DRAWER_TERTIARY)
             gravity = Gravity.CENTER_VERTICAL
             includeFontPadding = false
         }, LinearLayout.LayoutParams(WRAP, MATCH).apply { marginStart = dp(8) })
-        layoutParams = LinearLayout.LayoutParams(MATCH, dp(42)).apply { bottomMargin = dp(2) }
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(32))
     }
 
     private fun relativeSessionAge(value: Long): String {
@@ -2392,7 +2576,6 @@ class MainActivity : Activity() {
             "goal" to "set or view the goal for a long-running task",
             "permission" to "Switch the permission preset (sandbox mode + approval policy)",
             "plan" to "Enter or leave plan mode",
-            "model" to "Select the model for this conversation",
         )
         val surface = menuSurface()
         surface.addView(menuSection("Commands"))
@@ -2404,8 +2587,6 @@ class MainActivity : Activity() {
                     "compact" -> currentSession?.id?.let { runCommand(it, "/compact") }
                     "export" -> exportSessionLog()
                     "permission" -> anchor.post { showPermissionPicker() }
-                    "plan" -> insertCommand(name, trailingSpace = false)
-                    "model" -> anchor.post { showModels() }
                     else -> insertCommand(name)
                 }
             })
@@ -2742,7 +2923,7 @@ class MainActivity : Activity() {
             setTextColor(COLOR_TEXT)
             buttonTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(COLOR_BLUE, Color.rgb(132, 132, 135)),
+                intArrayOf(COLOR_BLUE, COLOR_MUTED),
             )
             setPadding(0, 0, 0, 0)
             gravity = Gravity.CENTER_VERTICAL
@@ -2777,9 +2958,9 @@ class MainActivity : Activity() {
         fun renderEnableState(checked: Boolean) {
             enable.isEnabled = checked
             enable.alpha = if (checked) 1f else 0.62f
-            enable.setTextColor(Color.rgb(42, 42, 44))
+            enable.setTextColor(palette.primaryButtonText)
             enable.background = rounded(
-                if (checked) COLOR_TEXT else Color.rgb(157, 157, 160),
+                if (checked) palette.primaryButtonFill else COLOR_BORDER,
                 24f,
             )
         }
@@ -3207,6 +3388,22 @@ class MainActivity : Activity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(composer.windowToken, 0)
     }
 
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            serverUrl != null &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NOTIFICATIONS && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            serverUrl?.let { TaskMonitorService.watch(this, it, sessions) }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         paused = false
@@ -3270,14 +3467,54 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
     private fun dp(value: Float): Int = (value * resources.displayMetrics.density + .5f).toInt()
 
+    private val COLOR_SURFACE get() = palette.surface
+    private val COLOR_DRAWER get() = palette.drawer
+    private val COLOR_DRAWER_BUTTON get() = palette.drawerButton
+    private val COLOR_DRAWER_BORDER get() = palette.drawerBorder
+    private val COLOR_DRAWER_SELECTED get() = palette.drawerSelected
+    private val COLOR_DRAWER_PRIMARY get() = palette.drawerPrimary
+    private val COLOR_DRAWER_SECONDARY get() = palette.drawerSecondary
+    private val COLOR_DRAWER_TERTIARY get() = palette.drawerTertiary
+    private val COLOR_DRAWER_BLUE get() = palette.drawerBlue
+    private val COLOR_COMPOSER get() = palette.composer
+    private val COLOR_CODE_SURFACE get() = palette.codeSurface
+    private val COLOR_CONTROL get() = palette.control
+    private val COLOR_CONTROL_TEXT get() = palette.controlText
+    private val COLOR_WEB_SETTINGS get() = palette.webSettings
+    private val COLOR_WEB_SETTINGS_BORDER get() = palette.webSettingsBorder
+    private val COLOR_SELECTED get() = palette.selected
+    private val COLOR_USER_BUBBLE get() = palette.userBubble
+    private val COLOR_TEXT get() = palette.text
+    private val COLOR_MUTED get() = palette.muted
+    private val COLOR_BORDER get() = palette.border
+    private val COLOR_BORDER_SUBTLE get() = palette.borderSubtle
+    private val COLOR_TOOL get() = palette.tool
+    private val COLOR_TODO_PANEL get() = palette.todoPanel
+    private val COLOR_TODO_BORDER get() = palette.todoBorder
+    private val COLOR_MENU get() = palette.menu
+    private val COLOR_MENU_SELECTED get() = palette.menuSelected
+    private val COLOR_NOTICE get() = palette.notice
+    private val COLOR_INLINE_CODE get() = palette.inlineCode
+    private val COLOR_GREEN get() = palette.green
+    private val COLOR_BLUE get() = palette.blue
+    private val COLOR_SEND_DISABLED get() = palette.sendDisabled
+    private val COLOR_SEND_DISABLED_ICON get() = palette.sendDisabledIcon
+    private val COLOR_ACTIVITY get() = palette.activity
+    private val COLOR_AMBER get() = palette.amber
+    private val COLOR_APPROVAL_STRIP get() = palette.approvalStrip
+    private val COLOR_RED get() = palette.red
+
     companion object {
         private const val PREFS_NAME = "deepseek_remote_preferences"
         private const val PREF_SERVER_URL = "server_base_url"
+        private const val PREF_THEME = "appearance_theme"
+        private const val REQUEST_NOTIFICATIONS = 4101
         private const val EXTRA_DEBUG_TODO_PREVIEW = "debug_todo_preview"
         private const val EXTRA_DEBUG_CONTROLS_PREVIEW = "debug_controls_preview"
         private const val EXTRA_DEBUG_APPROVAL_PREVIEW = "debug_approval_preview"
         private const val EXTRA_DEBUG_ACTIVITY_PREVIEW = "debug_activity_preview"
         private const val DRAWER_WIDTH_FRACTION = 0.86f
+        private const val DRAWER_MAX_WIDTH_DP = 264
         private const val PREF_DEFAULT_WORKSPACE_ID = "default_workspace_id"
         private const val PREF_DRAWER_GROUP_WORKSPACE = "drawer_group_workspace"
         private const val PREF_DRAWER_ORDER_UPDATED = "drawer_order_updated"
@@ -3293,34 +3530,5 @@ class MainActivity : Activity() {
         private const val STATUS_CONNECTED = 1
         private const val STATUS_VERIFY = 2
         private const val STATUS_ERROR = 3
-        private val COLOR_SURFACE = Color.rgb(0, 0, 0)
-        private val COLOR_DRAWER = Color.rgb(15, 15, 15)
-        private val COLOR_COMPOSER = Color.rgb(33, 33, 33)
-        private val COLOR_CODE_SURFACE = Color.rgb(24, 24, 26)
-        private val COLOR_CONTROL = Color.rgb(28, 28, 28)
-        private val COLOR_CONTROL_TEXT = Color.rgb(214, 214, 214)
-        private val COLOR_WEB_SETTINGS = Color.rgb(46, 46, 49)
-        private val COLOR_WEB_SETTINGS_BORDER = Color.rgb(62, 62, 65)
-        private val COLOR_SELECTED = Color.rgb(38, 38, 38)
-        private val COLOR_USER_BUBBLE = Color.rgb(47, 47, 47)
-        private val COLOR_TEXT = Color.rgb(244, 244, 244)
-        private val COLOR_MUTED = Color.rgb(171, 171, 171)
-        private val COLOR_BORDER = Color.rgb(76, 76, 76)
-        private val COLOR_BORDER_SUBTLE = Color.rgb(62, 62, 62)
-        private val COLOR_TOOL = Color.rgb(30, 30, 30)
-        private val COLOR_TODO_PANEL = Color.rgb(54, 54, 56)
-        private val COLOR_TODO_BORDER = Color.rgb(72, 72, 75)
-        private val COLOR_MENU = Color.rgb(55, 55, 57)
-        private val COLOR_MENU_SELECTED = Color.rgb(73, 73, 76)
-        private val COLOR_NOTICE = Color.rgb(63, 48, 20)
-        private val COLOR_INLINE_CODE = Color.rgb(38, 38, 38)
-        private val COLOR_GREEN = Color.rgb(91, 207, 139)
-        private val COLOR_BLUE = Color.rgb(82, 139, 255)
-        private val COLOR_SEND_DISABLED = Color.rgb(55, 68, 94)
-        private val COLOR_SEND_DISABLED_ICON = Color.rgb(145, 148, 154)
-        private val COLOR_ACTIVITY = Color.rgb(190, 193, 199)
-        private val COLOR_AMBER = Color.rgb(251, 191, 36)
-        private val COLOR_APPROVAL_STRIP = Color.rgb(39, 35, 24)
-        private val COLOR_RED = Color.rgb(248, 113, 113)
     }
 }

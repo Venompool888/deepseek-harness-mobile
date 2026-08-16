@@ -362,11 +362,7 @@ internal class HarnessApi(
     }
 
     fun command(sessionId: String, command: String) {
-        prompt(
-            sessionId,
-            JSONArray().put(JSONObject().put("type", "text").put("text", command)),
-            "queue",
-        )
+        call("commands/execute", commandExecutionPayload(sessionId, command))
     }
 
     fun prepareSessionExport(sessionId: String): SessionExport {
@@ -541,6 +537,13 @@ internal class HarnessApi(
         }
     }
 }
+
+internal fun commandExecutionPayload(sessionId: String, command: String): JSONObject = JSONObject().put(
+    "args",
+    JSONObject()
+        .put("agentId", sessionId)
+        .put("line", command),
+)
 
 internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).map(::getJSONObject)
 
