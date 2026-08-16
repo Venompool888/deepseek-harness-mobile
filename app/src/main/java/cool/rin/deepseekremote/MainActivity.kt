@@ -2404,7 +2404,7 @@ class MainActivity : Activity() {
                     "compact" -> currentSession?.id?.let { runCommand(it, "/compact") }
                     "export" -> exportSessionLog()
                     "permission" -> anchor.post { showPermissionPicker() }
-                    "plan" -> anchor.post { showModePicker() }
+                    "plan" -> insertCommand(name, trailingSpace = false)
                     "model" -> anchor.post { showModels() }
                     else -> insertCommand(name)
                 }
@@ -2446,8 +2446,8 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(MATCH, dp(54))
     }
 
-    private fun insertCommand(name: String) {
-        val command = "/$name "
+    private fun insertCommand(name: String, trailingSpace: Boolean = true) {
+        val command = "/$name${if (trailingSpace) " " else ""}"
         composer.setText(command)
         composer.setSelection(command.length)
         composer.requestFocus()
@@ -2525,22 +2525,6 @@ class MainActivity : Activity() {
         }
         popup = popupFor(modelButton, surface, 220)
         showPopupAbove(modelButton, popup, surface)
-    }
-
-    private fun showModePicker() {
-        val session = currentSession ?: return
-        val active = currentControls.planActive ?: run {
-            Toast.makeText(this, "此 Harness 未启用 plan mode", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Mode")
-            .setSingleChoiceItems(arrayOf("默认模式", "计划模式（Plan）"), if (active) 1 else 0) { dialog, which ->
-                dialog.dismiss()
-                runCommand(session.id, if (which == 1) "/plan" else "/plan off")
-            }
-            .setNegativeButton("取消", null)
-            .show()
     }
 
     private fun showPermissionPicker() {
