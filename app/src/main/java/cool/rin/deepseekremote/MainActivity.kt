@@ -3,6 +3,7 @@ package cool.rin.deepseekremote
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -27,6 +28,7 @@ import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -2735,32 +2737,128 @@ class MainActivity : Activity() {
     }
 
     private fun confirmFullAccess(sessionId: String) {
-        val acknowledgement = CheckBox(this).apply {
-            text = "I understand the risk"
-            textSize = 14f
-            setTextColor(COLOR_TEXT)
-            buttonTintList = ColorStateList.valueOf(COLOR_BLUE)
-            setPadding(dp(18), dp(6), dp(18), dp(6))
+        val dialog = Dialog(this)
+        val dialogRegular = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Typeface.create(Typeface.SANS_SERIF, 400, false)
+        } else {
+            Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Enable Full access?")
-            .setMessage("Full access reduces confirmation steps and lets the agent perform sensitive operations, file changes, or external commands. Only use it when you trust this task.")
-            .setView(acknowledgement)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Enable Full access", null)
-            .create()
-        dialog.setOnShowListener {
-            val enable = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            enable.isEnabled = false
-            acknowledgement.setOnCheckedChangeListener { _, checked -> enable.isEnabled = checked }
-            enable.setOnClickListener {
-                if (acknowledgement.isChecked) {
-                    dialog.dismiss()
-                    runCommand(sessionId, "/permission danger-full-access")
-                }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(16))
+            background = roundedStroke(COLOR_WEB_SETTINGS, COLOR_WEB_SETTINGS_BORDER, 18f)
+        }
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Enable Full access?"
+                setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14f)
+                setTextColor(COLOR_TEXT)
+                typeface = dialogRegular
+                includeFontPadding = false
+                gravity = Gravity.CENTER_VERTICAL
+            }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            addView(ImageButton(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_close_outline)
+                imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background = null
+                contentDescription = "Close"
+                setOnClickListener { dialog.dismiss() }
+            }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        }, LinearLayout.LayoutParams(MATCH, dp(40)))
+
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+            setPadding(0, dp(16), 0, 0)
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.web_full_access_warning)
+                contentDescription = "Warning"
+            }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(12) })
+            addView(TextView(this@MainActivity).apply {
+                text = "Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task."
+                setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12f)
+                typeface = dialogRegular
+                setLineSpacing(dp(2).toFloat(), 1f)
+                setTextColor(COLOR_CONTROL_TEXT)
+                includeFontPadding = false
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        val acknowledgement = CheckBox(this).apply {
+            text = "I understand the risks and want to continue"
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12f)
+            typeface = dialogRegular
+            setTextColor(COLOR_TEXT)
+            buttonTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(COLOR_BLUE, Color.rgb(132, 132, 135)),
+            )
+            setPadding(0, 0, 0, 0)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        panel.addView(acknowledgement, LinearLayout.LayoutParams(MATCH, dp(44)).apply {
+            topMargin = dp(8)
+        })
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+        val cancel = TextView(this).apply {
+            text = "Cancel"
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f)
+            typeface = dialogRegular
+            setTextColor(COLOR_TEXT)
+            gravity = Gravity.CENTER
+            background = roundedStroke(Color.TRANSPARENT, COLOR_BORDER, 24f)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+        val enable = TextView(this).apply {
+            text = "Enable Full access"
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f)
+            typeface = dialogRegular
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+        }
+        fun renderEnableState(checked: Boolean) {
+            enable.isEnabled = checked
+            enable.alpha = if (checked) 1f else 0.62f
+            enable.setTextColor(Color.rgb(42, 42, 44))
+            enable.background = rounded(
+                if (checked) COLOR_TEXT else Color.rgb(157, 157, 160),
+                24f,
+            )
+        }
+        renderEnableState(false)
+        acknowledgement.setOnCheckedChangeListener { _, checked -> renderEnableState(checked) }
+        enable.setOnClickListener {
+            if (acknowledgement.isChecked) {
+                dialog.dismiss()
+                runCommand(sessionId, "/permission danger-full-access")
             }
         }
+        actions.addView(cancel, LinearLayout.LayoutParams(dp(96), dp(44)).apply { marginEnd = dp(8) })
+        actions.addView(enable, LinearLayout.LayoutParams(dp(174), dp(44)))
+        panel.addView(actions, LinearLayout.LayoutParams(MATCH, dp(44)).apply { topMargin = dp(8) })
+
+        dialog.setContentView(panel)
+        dialog.setCanceledOnTouchOutside(true)
         dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply { dimAmount = 0.78f }
+            setLayout(
+                minOf(resources.displayMetrics.widthPixels - dp(32), dp(420)),
+                WRAP,
+            )
+        }
     }
 
     private fun showContextDetails() {
