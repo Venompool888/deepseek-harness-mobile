@@ -12,6 +12,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -133,6 +134,8 @@ internal class HarnessApi(
         val callId: String?,
         val reason: String?,
     )
+
+    data class SessionExport(val url: String, val cookie: String?)
 
     class AuthenticationRequired : IOException("Cloudflare Access authentication is required")
 
@@ -364,6 +367,30 @@ internal class HarnessApi(
             JSONArray().put(JSONObject().put("type", "text").put("text", command)),
             "queue",
         )
+    }
+
+    fun prepareSessionExport(sessionId: String): SessionExport {
+        val root = baseUrl().trimEnd('/')
+        val encodedId = URLEncoder.encode(sessionId, Charsets.UTF_8.name())
+        val address = "$root/api/session.export?sessionId=$encodedId&includeDescendants=true"
+        val cookie = cookieHeader(root)?.takeIf { it.isNotBlank() }
+        val connection = (URL(address).openConnection() as HttpURLConnection).apply {
+            requestMethod = "HEAD"
+            instanceFollowRedirects = false
+            connectTimeout = 15_000
+            readTimeout = 25_000
+            setRequestProperty("Accept", "application/zip")
+            setRequestProperty("User-Agent", "DeepSeekHarnessMobile/${BuildConfig.VERSION_NAME}")
+            cookie?.let { setRequestProperty("Cookie", it) }
+        }
+        try {
+            val status = connection.responseCode
+            if (status in 300..399 || status == 401 || status == 403) throw AuthenticationRequired()
+            if (status !in 200..299) throw IOException("Harness HTTP $status")
+            return SessionExport(address, cookie)
+        } finally {
+            connection.disconnect()
+        }
     }
 
     fun cancel(sessionId: String) {

@@ -3,6 +3,7 @@ package cool.rin.deepseekremote
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -13,7 +14,7 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.OpenableColumns
+import android.os.Environment
 import android.text.Editable
 import android.text.InputType
 import android.text.Spannable
@@ -25,7 +26,6 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
-import android.util.Base64
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -82,7 +82,6 @@ class MainActivity : Activity() {
     private lateinit var deliveryButton: TextView
     private lateinit var permissionButton: TextView
     private lateinit var statsView: TextView
-    private lateinit var attachmentStrip: LinearLayout
     private lateinit var todoPanelHost: LinearLayout
     private lateinit var progress: ProgressBar
     private lateinit var authOverlay: FrameLayout
@@ -124,7 +123,6 @@ class MainActivity : Activity() {
     private var drawerSwipeStartX = 0f
     private var drawerSwipeStartY = 0f
     @Volatile private var streamGeneration = 0
-    private val attachments = mutableListOf<PendingAttachment>()
     private val streamingRendered = mutableMapOf<String, String>()
     private val streamingAnimations = mutableMapOf<String, Runnable>()
     private val locallyAnimatedMessages = mutableSetOf<String>()
@@ -564,11 +562,6 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(6), dp(12), dp(8))
         setBackgroundColor(COLOR_SURFACE)
-        attachmentStrip = LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            visibility = View.GONE
-        }
-        addView(HorizontalScrollView(this@MainActivity).apply { addView(attachmentStrip) }, LinearLayout.LayoutParams(MATCH, WRAP))
         todoPanelHost = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -603,19 +596,20 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
+        toolbar.addView(ImageButton(this@MainActivity).apply {
+            setImageResource(R.drawable.ic_add_outline)
+            imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            background = rounded(COLOR_MENU_SELECTED, 18f)
+            contentDescription = "Commands"
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showCommands(it) }
+        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(4) })
         val leading = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        leading.addView(ImageButton(this@MainActivity).apply {
-            setImageResource(R.drawable.ic_add_outline)
-            imageTintList = ColorStateList.valueOf(COLOR_TEXT)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            background = rounded(COLOR_CONTROL, 18f)
-            contentDescription = "添加图片或文本"
-            isClickable = true
-            setOnClickListener { chooseAttachment() }
-        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(8) })
         permissionButton = toolbarChip("Workspace Write", R.drawable.ic_shield_outline) { showPermissionPicker() }
         modeButton = toolbarChip("默认", null) { showModePicker() }
         deliveryButton = toolbarChip("排队", null) { showDeliveryPicker() }
@@ -698,11 +692,9 @@ class MainActivity : Activity() {
                 (normalComposerCard.parent as? ViewGroup)?.removeView(normalComposerCard)
                 composerSeat.addView(normalComposerCard, LinearLayout.LayoutParams(MATCH, WRAP))
             }
-            attachmentStrip.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE
             renderStats()
         } else {
             composerSeat.removeAllViews()
-            attachmentStrip.visibility = View.GONE
             todoPanelHost.visibility = View.GONE
             statsView.visibility = View.GONE
             composerSeat.addView(buildApprovalCard(approval), LinearLayout.LayoutParams(MATCH, WRAP))
@@ -2083,23 +2075,9 @@ class MainActivity : Activity() {
             return
         }
         val text = composer.text.toString().trim()
-        if (text.isEmpty() && attachments.isEmpty()) return
-        val content = JSONArray()
-        if (text.isNotEmpty()) content.put(JSONObject().put("type", "text").put("text", text))
-        attachments.forEach { attachment ->
-            when (attachment) {
-                is PendingAttachment.Image -> content.put(JSONObject().apply {
-                    put("type", "image")
-                    put("mediaType", attachment.mediaType)
-                    put("data", attachment.base64)
-                    put("name", attachment.name)
-                })
-                is PendingAttachment.Text -> content.put(JSONObject().put("type", "text").put("text", "[文件：${attachment.name}]\n${attachment.text}"))
-            }
-        }
+        if (text.isEmpty()) return
+        val content = JSONArray().put(JSONObject().put("type", "text").put("text", text))
         composer.setText("")
-        attachments.clear()
-        renderAttachments()
         knownAssistantKeysBeforePrompt = lastMessages
             .filter { it.role == ChatMessage.Role.ASSISTANT }
             .mapTo(mutableSetOf()) { it.key }
@@ -2141,7 +2119,7 @@ class MainActivity : Activity() {
     private fun updateSendState() {
         if (!::sendButton.isInitialized || !::composer.isInitialized) return
         val running = currentSession?.running == true
-        val hasDraft = composer.text?.isNotBlank() == true || attachments.isNotEmpty()
+        val hasDraft = composer.text?.isNotBlank() == true
         val enabled = running || (composer.isEnabled && currentSession != null && hasDraft)
         sendButton.isEnabled = enabled
         sendButton.alpha = 1f
@@ -2425,6 +2403,115 @@ class MainActivity : Activity() {
             })
         }
         showPopupAbove(modelButton, popup, root)
+    }
+
+    private fun showCommands(anchor: View) {
+        val commands = listOf(
+            "compact" to "Compact older conversation history",
+            "export" to "Download this Session log as a ZIP archive",
+            "feedback" to "record feedback about this session",
+            "goal" to "set or view the goal for a long-running task",
+            "permission" to "Switch the permission preset (sandbox mode + approval policy)",
+            "plan" to "Enter or leave plan mode",
+            "model" to "Select the model for this conversation",
+        )
+        val surface = menuSurface()
+        surface.addView(menuSection("Commands"))
+        var popup: PopupWindow? = null
+        commands.forEach { (name, description) ->
+            surface.addView(commandMenuRow(name, description) {
+                popup?.dismiss()
+                when (name) {
+                    "compact" -> currentSession?.id?.let { runCommand(it, "/compact") }
+                    "export" -> exportSessionLog()
+                    "permission" -> anchor.post { showPermissionPicker() }
+                    "plan" -> anchor.post { showModePicker() }
+                    "model" -> anchor.post { showModels() }
+                    else -> insertCommand(name)
+                }
+            })
+        }
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(surface, ViewGroup.LayoutParams(MATCH, WRAP))
+        }
+        popup = popupFor(anchor, scroll, 300).apply { height = dp(418) }
+        showPopupAbove(anchor, popup, scroll)
+    }
+
+    private fun commandMenuRow(name: String, description: String, action: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(10), dp(5), dp(10), dp(5))
+        isClickable = true
+        isFocusable = true
+        background = rounded(Color.TRANSPARENT, 10f)
+        contentDescription = "$name, $description"
+        addView(TextView(this@MainActivity).apply {
+            text = name
+            textSize = 14f
+            setTextColor(COLOR_TEXT)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(MATCH, dp(22)))
+        addView(TextView(this@MainActivity).apply {
+            text = description
+            textSize = 11f
+            setTextColor(COLOR_MUTED)
+            includeFontPadding = false
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(MATCH, dp(20)))
+        setOnClickListener { action() }
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(54))
+    }
+
+    private fun insertCommand(name: String) {
+        val command = "/$name "
+        composer.setText(command)
+        composer.setSelection(command.length)
+        composer.requestFocus()
+        composer.post {
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .showSoftInput(composer, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun exportSessionLog() {
+        val session = currentSession ?: return
+        progress.visibility = View.VISIBLE
+        worker.execute {
+            try {
+                val export = api.prepareSessionExport(session.id)
+                mainHandler.post {
+                    progress.visibility = View.GONE
+                    val filename = "deepseek-harness-session-${session.id.take(8)}-${System.currentTimeMillis()}.zip"
+                    val request = DownloadManager.Request(Uri.parse(export.url)).apply {
+                        setTitle("DeepSeek Harness Session log")
+                        setDescription("Downloading Session ZIP")
+                        setMimeType("application/zip")
+                        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
+                        export.cookie?.let { addRequestHeader("Cookie", it) }
+                        addRequestHeader("User-Agent", "DeepSeekHarnessMobile/${BuildConfig.VERSION_NAME}")
+                    }
+                    getSystemService(DownloadManager::class.java).enqueue(request)
+                    AlertDialog.Builder(this)
+                        .setTitle("Session download started")
+                        .setMessage("The Session ZIP is downloading to Downloads.")
+                        .setPositiveButton("Close", null)
+                        .show()
+                }
+            } catch (_: HarnessApi.AuthenticationRequired) {
+                mainHandler.post { progress.visibility = View.GONE; showAuth() }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    progress.visibility = View.GONE
+                    Toast.makeText(this, error.message ?: "Unable to export Session log", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun showModelPicker(session: HarnessApi.Session, models: HarnessApi.Models) {
@@ -2754,74 +2841,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun chooseAttachment() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "text/plain", "text/markdown", "application/json"))
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        try {
-            startActivityForResult(intent, ATTACHMENT_REQUEST)
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "找不到系统文件选择器", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun readAttachment(uri: Uri) {
-        try {
-            val mime = contentResolver.getType(uri).orEmpty().lowercase()
-            val name = queryName(uri) ?: "attachment"
-            val limit = if (mime.startsWith("image/")) MAX_IMAGE_BYTES else MAX_TEXT_BYTES
-            val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(16 * 1024)
-                var total = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > limit) throw IOException("文件过大")
-                    output.write(buffer, 0, count)
-                }
-                output.toByteArray()
-            } ?: throw IOException("无法读取文件")
-            if (mime.startsWith("image/")) {
-                if (mime !in SUPPORTED_IMAGES) throw IOException("不支持这种图片格式")
-                attachments += PendingAttachment.Image(name, mime, Base64.encodeToString(bytes, Base64.NO_WRAP))
-            } else {
-                attachments += PendingAttachment.Text(name, bytes.toString(Charsets.UTF_8))
-            }
-            renderAttachments()
-        } catch (error: Exception) {
-            Toast.makeText(this, error.message ?: "无法读取附件", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun renderAttachments() {
-        attachmentStrip.removeAllViews()
-        attachmentStrip.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE
-        attachments.forEachIndexed { index, attachment ->
-            attachmentStrip.addView(TextView(this).apply {
-                text = "${if (attachment is PendingAttachment.Image) "图片" else "文本"} · ${attachment.name}  ×"
-                textSize = 12f
-                setTextColor(COLOR_TEXT)
-                setPadding(dp(10), dp(7), dp(10), dp(7))
-                background = rounded(COLOR_SELECTED, 10f)
-                setOnClickListener { attachments.removeAt(index); renderAttachments() }
-            }, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = dp(7); bottomMargin = dp(7) })
-        }
-        updateSendState()
-    }
-
-    private fun queryName(uri: Uri): String? = contentResolver.query(
-        uri,
-        arrayOf(OpenableColumns.DISPLAY_NAME),
-        null,
-        null,
-        null,
-    )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-
     private fun showSessionSearch() {
         val input = EditText(this).apply {
             hint = "标题或目录"
@@ -3142,11 +3161,6 @@ class MainActivity : Activity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(composer.windowToken, 0)
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == ATTACHMENT_REQUEST && resultCode == RESULT_OK) data?.data?.let(::readAttachment)
-    }
-
     override fun onResume() {
         super.onResume()
         paused = false
@@ -3210,14 +3224,7 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
     private fun dp(value: Float): Int = (value * resources.displayMetrics.density + .5f).toInt()
 
-    private sealed interface PendingAttachment {
-        val name: String
-        data class Image(override val name: String, val mediaType: String, val base64: String) : PendingAttachment
-        data class Text(override val name: String, val text: String) : PendingAttachment
-    }
-
     companion object {
-        private const val ATTACHMENT_REQUEST = 4201
         private const val PREFS_NAME = "deepseek_remote_preferences"
         private const val PREF_SERVER_URL = "server_base_url"
         private const val EXTRA_DEBUG_TODO_PREVIEW = "debug_todo_preview"
@@ -3228,8 +3235,6 @@ class MainActivity : Activity() {
         private const val PREF_DEFAULT_WORKSPACE_ID = "default_workspace_id"
         private const val PREF_DRAWER_GROUP_WORKSPACE = "drawer_group_workspace"
         private const val PREF_DRAWER_ORDER_UPDATED = "drawer_order_updated"
-        private const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
-        private const val MAX_TEXT_BYTES = 128 * 1024
         private const val MAX_STREAM_BACKLOG = 64
         private const val STREAM_CHARACTER_MS = 24L
         private const val STREAM_FADE_MS = 90L
@@ -3237,7 +3242,6 @@ class MainActivity : Activity() {
         private const val LIVE_REFRESH_MS = 90L
         private const val STREAM_RECONNECT_MS = 800L
         private val LIVE_SESSION_FRAMES = setOf("session/event", "session/projection", "session/queue", "session/jobs")
-        private val SUPPORTED_IMAGES = setOf("image/png", "image/jpeg", "image/webp", "image/gif")
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
         private const val STATUS_CONNECTED = 1
