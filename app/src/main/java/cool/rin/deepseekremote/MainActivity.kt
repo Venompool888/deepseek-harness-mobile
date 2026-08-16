@@ -80,8 +80,6 @@ class MainActivity : Activity() {
     private lateinit var composerSeat: LinearLayout
     private lateinit var normalComposerCard: LinearLayout
     private lateinit var sendButton: ImageButton
-    private lateinit var modeButton: TextView
-    private lateinit var deliveryButton: TextView
     private lateinit var permissionButton: TextView
     private lateinit var statsView: TextView
     private lateinit var todoPanelHost: LinearLayout
@@ -613,11 +611,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         permissionButton = toolbarChip("Workspace Write", R.drawable.ic_shield_outline) { showPermissionPicker() }
-        modeButton = toolbarChip("默认", null) { showModePicker() }
-        deliveryButton = toolbarChip("排队", null) { showDeliveryPicker() }
         leading.addView(permissionButton)
-        leading.addView(modeButton)
-        leading.addView(deliveryButton)
         toolbar.addView(HorizontalScrollView(this@MainActivity).apply {
             isHorizontalScrollBarEnabled = false
             addView(leading)
@@ -1691,14 +1685,6 @@ class MainActivity : Activity() {
     }
 
     private fun renderControls() {
-        val plan = currentControls.planActive
-        modeButton.visibility = if (plan == null) View.GONE else View.VISIBLE
-        modeButton.text = when {
-            currentControls.planPending -> "切换中"
-            plan == true -> "Plan"
-            else -> "默认"
-        }
-        deliveryButton.text = if (promptMode == "steer") "插话" else "排队"
         val models = currentModels
         val current = models?.items?.firstOrNull {
             it.provider == models.currentProvider && it.id == models.currentModel
@@ -2548,19 +2534,6 @@ class MainActivity : Activity() {
         }
         popup = popupFor(modelButton, surface, 220)
         showPopupAbove(modelButton, popup, surface)
-    }
-
-    private fun showDeliveryPicker() {
-        val choices = arrayOf("排队发送（queue）", "立即插话（steer）")
-        AlertDialog.Builder(this)
-            .setTitle("消息发送方式")
-            .setSingleChoiceItems(choices, if (promptMode == "steer") 1 else 0) { dialog, which ->
-                promptMode = if (which == 1) "steer" else "queue"
-                renderControls()
-                dialog.dismiss()
-            }
-            .setNegativeButton("取消", null)
-            .show()
     }
 
     private fun showModePicker() {
