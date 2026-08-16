@@ -97,6 +97,7 @@ class MainActivity : Activity() {
     private var drawerSearchQuery = ""
     private var drawerGroupByWorkspace = true
     private var drawerOrderLastUpdated = true
+    private val manuallyExpandedWorkspaceKeys = mutableSetOf<String>()
     private var currentSession: HarnessApi.Session? = null
     private var currentModels: HarnessApi.Models? = null
     private var currentControls = HarnessApi.SessionControls()
@@ -1567,6 +1568,7 @@ class MainActivity : Activity() {
         if (changed) {
             sessions = emptyList()
             drawerWorkspaces = emptyList()
+            manuallyExpandedWorkspaceKeys.clear()
             currentSession = null
             currentModels = null
             currentControls = HarnessApi.SessionControls()
@@ -1577,13 +1579,16 @@ class MainActivity : Activity() {
         if (!paused) mainHandler.postDelayed(poll, 1_000)
     }
 
-    private fun workspaceHeader(title: String) = LinearLayout(this).apply {
+    private fun workspaceHeader(title: String, active: Boolean, expanded: Boolean, onToggle: () -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(6), 0, dp(6), 0)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onToggle() }
         addView(ImageView(this@MainActivity).apply {
-            setImageResource(R.drawable.ic_folder_outline)
-            imageTintList = ColorStateList.valueOf(COLOR_BLUE)
+            setImageResource(R.drawable.ic_folder_web_open)
+            imageTintList = ColorStateList.valueOf(if (active) COLOR_BLUE else COLOR_MUTED)
         }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) })
         addView(TextView(this@MainActivity).apply {
             text = title
@@ -1594,6 +1599,11 @@ class MainActivity : Activity() {
             ellipsize = android.text.TextUtils.TruncateAt.END
             includeFontPadding = false
         }, LinearLayout.LayoutParams(0, MATCH, 1f))
+        addView(ImageView(this@MainActivity).apply {
+            setImageResource(R.drawable.ic_workspace_chevron_web)
+            imageTintList = ColorStateList.valueOf(COLOR_MUTED)
+            rotation = if (expanded) 90f else 0f
+        }, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) })
         layoutParams = LinearLayout.LayoutParams(MATCH, dp(42)).apply { topMargin = dp(4) }
     }
 
@@ -1896,7 +1906,7 @@ class MainActivity : Activity() {
             ChatMessage.ActivityKind.SEARCH -> R.drawable.ic_search_outline
             ChatMessage.ActivityKind.WRITE -> R.drawable.ic_create_outline
             ChatMessage.ActivityKind.TODO -> R.drawable.ic_checklist_harness
-            ChatMessage.ActivityKind.CONTEXT -> R.drawable.ic_build_outline
+            ChatMessage.ActivityKind.CONTEXT -> R.drawable.ic_context_injection_web
             ChatMessage.ActivityKind.RETRY -> R.drawable.ic_think_harness
             ChatMessage.ActivityKind.ERROR, ChatMessage.ActivityKind.WARNING, ChatMessage.ActivityKind.UNKNOWN,
             ChatMessage.ActivityKind.TERMINAL, null -> R.drawable.ic_terminal_harness
@@ -2171,25 +2181,47 @@ class MainActivity : Activity() {
             return
         }
 
+        val current = currentSession
+        val activeWorkspace = WorkspaceBehavior.matchingWorkspace(current, drawerWorkspaces)
         val placed = mutableSetOf<String>()
         drawerWorkspaces.forEach { workspace ->
             val members = visibleSessions.filter { session ->
-                session.id in workspace.sessionIds || session.cwd == workspace.path
+                session.id in workspace.sessionIds || WorkspaceBehavior.samePath(session.cwd, workspace.path)
             }
             if (members.isNotEmpty()) {
-                sessionList.addView(workspaceHeader(workspace.title))
-                members.forEach { session ->
-                    sessionList.addView(sessionRow(session))
-                    placed += session.id
+                val active = workspace.id == activeWorkspace?.id
+                val key = "workspace:${workspace.id}"
+                val expanded = query.isNotBlank() || active || key in manuallyExpandedWorkspaceKeys
+                sessionList.addView(workspaceHeader(workspace.title, active, expanded) {
+                    if (!active) {
+                        if (!manuallyExpandedWorkspaceKeys.add(key)) manuallyExpandedWorkspaceKeys.remove(key)
+                        renderSessionList()
+                    }
+                })
+                if (expanded) {
+                    members.forEach { session -> sessionList.addView(sessionRow(session)) }
                 }
+                members.forEach { placed += it.id }
             }
         }
 
         visibleSessions.filterNot { it.id in placed }
             .groupBy { it.cwd.orEmpty() }
             .forEach { (path, members) ->
-                sessionList.addView(workspaceHeader(path.trimEnd('/').substringAfterLast('/').ifBlank { "Workspace" }))
-                members.forEach { session -> sessionList.addView(sessionRow(session)) }
+                val active = activeWorkspace == null && members.any { it.id == current?.id }
+                val key = "path:$path"
+                val expanded = query.isNotBlank() || active || key in manuallyExpandedWorkspaceKeys
+                sessionList.addView(workspaceHeader(
+                    path.trimEnd('/').substringAfterLast('/').ifBlank { "Workspace" },
+                    active,
+                    expanded,
+                ) {
+                    if (!active) {
+                        if (!manuallyExpandedWorkspaceKeys.add(key)) manuallyExpandedWorkspaceKeys.remove(key)
+                        renderSessionList()
+                    }
+                })
+                if (expanded) members.forEach { session -> sessionList.addView(sessionRow(session)) }
             }
     }
 
@@ -2200,7 +2232,11 @@ class MainActivity : Activity() {
         background = if (session.id == currentSession?.id) rounded(COLOR_SELECTED, 8f) else null
         isClickable = true
         isFocusable = true
-        setOnClickListener { closeDrawer(); selectSession(session) }
+        setOnClickListener {
+            manuallyExpandedWorkspaceKeys.clear()
+            closeDrawer()
+            selectSession(session)
+        }
         setOnLongClickListener { showSessionActions(session); true }
         addView(TextView(this@MainActivity).apply {
             text = session.title ?: session.cwd?.substringAfterLast('/') ?: "Untitled"
@@ -2308,57 +2344,12 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 val workspaces = api.workspaces()
-                mainHandler.post {
-                    progress.visibility = View.GONE
-                    val savedId = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                        .getString(PREF_DEFAULT_WORKSPACE_ID, null)
-                    val preferred = workspaces.firstOrNull { it.id == savedId }
-                    if (savedId != null && preferred == null) {
-                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                            .remove(PREF_DEFAULT_WORKSPACE_ID)
-                            .apply()
-                    }
-                    val defaultLabel = preferred?.let { "${it.title}\n${it.path}" }
-                        ?: "Harness 默认工作目录"
-                    AlertDialog.Builder(this)
-                        .setTitle("新建会话")
-                        .setItems(arrayOf("使用默认目录\n$defaultLabel", "手动选择目录…")) { _, which ->
-                            if (which == 0) createSession(preferred?.id) else showWorkspacePicker(workspaces, savedId)
-                        }
-                        .setNegativeButton("取消", null)
-                        .show()
-                }
-            } catch (error: Exception) {
-                mainHandler.post { progress.visibility = View.GONE; Toast.makeText(this, error.message, Toast.LENGTH_LONG).show() }
-            }
-        }
-    }
-
-    private fun showWorkspacePicker(workspaces: List<HarnessApi.Workspace>, selectedId: String?) {
-        val labels = arrayOf("Harness 默认工作目录", *workspaces.map { "${it.title}\n${it.path}" }.toTypedArray())
-        val checked = workspaces.indexOfFirst { it.id == selectedId }.let { if (it < 0) 0 else it + 1 }
-        AlertDialog.Builder(this)
-            .setTitle("手动选择目录")
-            .setSingleChoiceItems(labels, checked) { dialog, which ->
-                val workspaceId = if (which == 0) null else workspaces[which - 1].id
-                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().apply {
-                    if (workspaceId == null) remove(PREF_DEFAULT_WORKSPACE_ID)
-                    else putString(PREF_DEFAULT_WORKSPACE_ID, workspaceId)
-                }.apply()
-                dialog.dismiss()
-                createSession(workspaceId)
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun createSession(workspaceId: String?) {
-        progress.visibility = View.VISIBLE
-        worker.execute {
-            try {
+                val session = currentSession
+                val workspaceId = WorkspaceBehavior.matchingWorkspace(session, workspaces)?.id
                 val id = api.createSession(workspaceId)
                 mainHandler.post {
-                    currentSession = HarnessApi.Session(id, null, null, null, System.currentTimeMillis(), false, true)
+                    drawerWorkspaces = workspaces
+                    currentSession = HarnessApi.Session(id, null, session?.cwd, null, System.currentTimeMillis(), false, true)
                     refresh(showSpinner = true)
                 }
             } catch (error: Exception) {
