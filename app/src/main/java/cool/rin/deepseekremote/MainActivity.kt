@@ -690,14 +690,18 @@ class MainActivity : Activity() {
 
     private fun renderComposerSeat() {
         if (!::composerSeat.isInitialized || !::normalComposerCard.isInitialized) return
-        composerSeat.removeAllViews()
         val approval = currentSession?.id?.let(pendingApprovalsBySession::get)
         if (approval == null) {
             renderTodoDock()
-            composerSeat.addView(normalComposerCard, LinearLayout.LayoutParams(MATCH, WRAP))
+            if (composerSeat.childCount != 1 || composerSeat.getChildAt(0) !== normalComposerCard) {
+                composerSeat.removeAllViews()
+                (normalComposerCard.parent as? ViewGroup)?.removeView(normalComposerCard)
+                composerSeat.addView(normalComposerCard, LinearLayout.LayoutParams(MATCH, WRAP))
+            }
             attachmentStrip.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE
             renderStats()
         } else {
+            composerSeat.removeAllViews()
             attachmentStrip.visibility = View.GONE
             todoPanelHost.visibility = View.GONE
             statsView.visibility = View.GONE
