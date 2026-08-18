@@ -14,15 +14,40 @@ internal data class ChatMessage(
     val callId: String? = null,
     val state: State = State.OK,
     val activityKind: ActivityKind? = null,
+    val assistantFooter: AssistantFooter? = null,
 ) {
     enum class Role { USER, ASSISTANT, REASONING, TOOL, ACTIVITY, NOTICE }
     enum class State { RUNNING, OK, ERROR, STOPPED }
     enum class ActivityKind { THINK, TERMINAL, READ, SEARCH, WRITE, TODO, CONTEXT, RETRY, ERROR, WARNING, UNKNOWN }
 }
 
+internal data class AssistantFooter(
+    val messageId: String,
+    val atSeq: Long,
+    val runMs: Long? = null,
+    val ttftMs: Long? = null,
+    val tokensPerSecond: Double? = null,
+)
+
 internal object ChatProjection {
     fun fromHistory(entries: JSONArray): List<ChatMessage> {
         val events = entries.objects().map { it.getJSONObject("event") }
+        val turnStarts = mutableMapOf<Int, Long>()
+        val turnEnds = mutableMapOf<Int, Long>()
+        val stepTimings = mutableMapOf<String, StepTiming>()
+        events.forEach { event ->
+            val data = event.optJSONObject("data") ?: return@forEach
+            when (event.optString("type")) {
+                "turn/start" -> turnStarts[data.optInt("turn")] = event.optLong("time")
+                "turn/end" -> turnEnds[data.optInt("turn")] = event.optLong("time")
+                "step/start" -> stepTimings.getOrPut(stepKey(data)) { StepTiming() }.start = event.optLong("time")
+                "assistant/chunk" -> {
+                    val chunk = data.optJSONObject("chunk") ?: return@forEach
+                    val timing = stepTimings.getOrPut(stepKey(data)) { StepTiming() }
+                    if (timing.firstToken == null && isTokenDelta(chunk)) timing.firstToken = event.optLong("time")
+                }
+            }
+        }
         val compactions = compactionEvidence(events)
         val commands = commandEvidence(events)
         val retries = retryEvidence(events)
@@ -37,6 +62,8 @@ internal object ChatProjection {
         val streamingTimes = mutableMapOf<String, Long>()
         val emittedCommands = mutableSetOf<String>()
         val emittedRetries = mutableSetOf<String>()
+        val assistantEvidence = mutableMapOf<String, AssistantEvidence>()
+        val assistantSteps = mutableListOf<AssistantStep>()
 
         for (event in events) {
             val type = event.getString("type")
@@ -73,6 +100,19 @@ internal object ChatProjection {
                 "assistant/message" -> {
                     val message = data.optJSONObject("message") ?: data
                     val content = message.optJSONArray("content")
+                    val turn = data.optInt("turn", -1)
+                    val step = data.optInt("step", -1)
+                    val messageId = message.optString("id")
+                    val stepTiming = stepTimings[stepKey(turn, step)]
+                    val usage = data.optJSONObject("usage") ?: message.optJSONObject("usage")
+                    assistantSteps += AssistantStep(
+                        turn = turn,
+                        step = step,
+                        completedTime = time,
+                        stepStartTime = stepTiming?.start,
+                        firstTokenTime = stepTiming?.firstToken,
+                        outputTokens = usage?.outputTokens(),
+                    )
                     content?.objects()?.forEachIndexed { index, block ->
                         val text = block.optString("text").trim()
                         when (block.optString("type")) {
@@ -81,9 +121,13 @@ internal object ChatProjection {
                                 title = "Think",
                                 activityKind = ChatMessage.ActivityKind.THINK,
                             )
-                            "text" -> if (text.isNotBlank()) messages += ChatMessage(
-                                "event-$seq-text-$index", ChatMessage.Role.ASSISTANT, text, time,
-                            )
+                            "text" -> if (text.isNotBlank()) {
+                                val key = "event-$seq-text-$index"
+                                messages += ChatMessage(key, ChatMessage.Role.ASSISTANT, text, time)
+                                if (turn >= 0 && step >= 0 && messageId.isNotBlank()) {
+                                    assistantEvidence[key] = AssistantEvidence(messageId, seq, turn, step)
+                                }
+                            }
                         }
                     }
                     streaming.keys.removeAll { it.startsWith("${stepKey(data)}:") }
@@ -233,10 +277,71 @@ internal object ChatProjection {
                 )
             }
         }
+        turnEnds.forEach { (turn, endedAt) ->
+            val target = messages.withIndex()
+                .filter { (_, message) -> message.role == ChatMessage.Role.ASSISTANT && assistantEvidence[message.key]?.turn == turn }
+                .maxByOrNull { (_, message) -> assistantEvidence.getValue(message.key).seq }
+                ?: return@forEach
+            val evidence = assistantEvidence.getValue(target.value.key)
+            val steps = assistantSteps.filter { it.turn == turn }
+            val firstStep = steps.minByOrNull { it.step }
+            var decodeMs = 0L
+            var outputTokens = 0L
+            var sampled = false
+            steps.forEach { reading ->
+                val firstToken = reading.firstTokenTime
+                val tokens = reading.outputTokens
+                if (firstToken != null && tokens != null) {
+                    decodeMs += (reading.completedTime - firstToken).coerceAtLeast(0L)
+                    outputTokens += tokens
+                    sampled = true
+                }
+            }
+            messages[target.index] = target.value.copy(
+                assistantFooter = AssistantFooter(
+                    messageId = evidence.messageId,
+                    atSeq = evidence.seq,
+                    runMs = turnStarts[turn]?.let { (endedAt - it).coerceAtLeast(0L) },
+                    ttftMs = if (firstStep?.stepStartTime != null && firstStep.firstTokenTime != null) {
+                        (firstStep.firstTokenTime - firstStep.stepStartTime).coerceAtLeast(0L)
+                    } else null,
+                    tokensPerSecond = if (sampled && decodeMs > 0L) outputTokens * 1_000.0 / decodeMs else null,
+                ),
+            )
+        }
         return messages.sortedBy { it.time }
     }
 
     private data class StreamingBlock(val kind: String, val text: StringBuilder = StringBuilder())
+
+    private data class StepTiming(var start: Long? = null, var firstToken: Long? = null)
+
+    private data class AssistantEvidence(val messageId: String, val seq: Long, val turn: Int, val step: Int)
+
+    private data class AssistantStep(
+        val turn: Int,
+        val step: Int,
+        val completedTime: Long,
+        val stepStartTime: Long?,
+        val firstTokenTime: Long?,
+        val outputTokens: Long?,
+    )
+
+    private fun stepKey(data: JSONObject): String = stepKey(data.optInt("turn", -1), data.optInt("step", -1))
+
+    private fun stepKey(turn: Int, step: Int): String = "$turn:$step"
+
+    private fun isTokenDelta(chunk: JSONObject): Boolean = when (chunk.optString("type")) {
+        "text-delta", "reasoning-delta" -> chunk.optString("text").isNotEmpty()
+        "tool-call-delta" -> chunk.optString("argumentsDelta").isNotEmpty() || chunk.has("name")
+        else -> false
+    }
+
+    private fun JSONObject.outputTokens(): Long? = when {
+        has("outputTokens") -> optLong("outputTokens").takeIf { it >= 0L }
+        has("completionTokens") -> optLong("completionTokens").takeIf { it >= 0L }
+        else -> null
+    }
 
     private data class CompactionEvidence(
         val id: String,
@@ -460,8 +565,6 @@ internal object ChatProjection {
         val firstLine = text.lineSequence().firstOrNull().orEmpty().trim()
         return listOf(sourceLabel, firstLine).filter(String::isNotBlank).joinToString(" · ").ifBlank { "Injected model context" }
     }
-
-    private fun stepKey(data: JSONObject): String = "${data.optInt("turn")}:${data.optInt("step")}"
 
     private fun visibleText(content: JSONArray?): String {
         if (content == null) return ""

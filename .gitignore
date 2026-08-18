@@ -8,6 +8,7 @@ local.properties
 *.iml
 .idea/
 captures/
+.playwright-cli/
 
 # Local QA evidence and private device/session captures
 artifacts/

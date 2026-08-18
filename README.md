@@ -12,12 +12,56 @@
   <a href="https://github.com/Venompool888/deepseek-harness-mobile/releases/latest"><strong>下载最新版 APK</strong></a>
 </p>
 
+## 不只是聊天：在手机上看着 Agent 干活
+
+原生 Android 界面会持续呈现 Harness 的真实执行过程，而不是只留下一个等待动画：
+
+- 实时展示 **Think、Write、工具调用、回复内容和运行时长**。
+- **To-dos** 汇总已完成、进行中和待处理步骤，长任务进度一眼可见。
+- 上下文仪表显示使用比例，并可展开查看 System prompt、Tools 与 Messages 占用。
+- 切到后台后，系统通知仍会显示 Harness 任务正在运行，方便随时返回会话。
+- 在支持的 OPPO / ColorOS 设备上，可通过 **流体云** 快速查看当前任务状态。
+
+<p align="center">
+  <img src="docs/images/showcase/live-agent-progress.png" width="310" alt="在 Android 原生界面实时查看 Agent 的思考、写入、待办与运行时长">
+  &nbsp;
+  <img src="docs/images/showcase/context-and-todos.png" width="310" alt="查看 Harness 上下文占用明细和已完成的任务清单">
+</p>
+
+<p align="center">
+  <sub>实时执行过程、上下文压力与任务清单，都集中在同一个移动会话里。</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/showcase/background-task-notification.png" width="520" alt="Android 系统通知持续显示 DeepSeek Harness 后台任务运行状态">
+</p>
+
+<p align="center">
+  <sub>离开应用也能看到后台任务状态。</sub>
+</p>
+
+### ColorOS 流体云
+
+已在 OPPO CPH2797（ColorOS 16）实机显示胶囊态与展开卡片态，无需打开应用即可确认 Harness 任务仍在运行。
+
+<p align="center">
+  <img src="docs/images/showcase/coloros-fluid-cloud-capsule.jpg" width="620" alt="DeepSeek Harness 任务在 ColorOS 流体云中的胶囊态">
+</p>
+
+<p align="center">
+  <img src="docs/images/showcase/coloros-fluid-cloud-expanded.jpg" width="620" alt="DeepSeek Harness 任务在 ColorOS 流体云中的展开卡片态">
+</p>
+
+<p align="center">
+  <sub>胶囊态快速扫一眼，展开后查看任务标题与运行状态。</sub>
+</p>
+
 ## 安装
 
 本流程已在 **OPPO CPH2797（Android 16 / ColorOS 16）** 上实际验证。
 
 1. 在手机 Chrome 中打开 [Latest Release](https://github.com/Venompool888/deepseek-harness-mobile/releases/latest)。
-2. 找到 **Assets**，点击 `deepseek-harness-mobile-v1.0.4.apk` 下载。
+2. 找到 **Assets**，点击 `deepseek-harness-mobile-v1.1.0.apk` 下载。
 3. 下载完成后打开 APK，并按 ColorOS 的安装提示继续。如果系统阻止安装来自浏览器的应用，请按系统提示临时允许当前浏览器安装未知应用，然后返回继续安装。
 4. 安装完成后打开 **DeepSeek Harness Mobile**。
 
@@ -25,7 +69,7 @@
   <img src="docs/images/oppo/01-github-release-apk.png" width="320" alt="在 OPPO 手机上从 GitHub Release 下载 APK">
 </p>
 
-> 当前 v1.0.4 APK 的 SHA-256：`41d2fdee88ae3bf631c50d4bc110d4d6887007b328970aebc31d36c713b79bc3`
+> 当前 v1.1.0 APK 的 SHA-256：`e026a373b3a9359293e3daeced3cfa08a0df109dd91d4d489a1f37f737c54fde`
 
 ## 首次连接
 

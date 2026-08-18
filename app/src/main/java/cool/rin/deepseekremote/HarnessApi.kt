@@ -70,7 +70,10 @@ internal class HarnessApi(
         val currentEffort: String?,
         val routable: Boolean,
         val items: List<Model>,
+        val failures: List<ModelFailure> = emptyList(),
     )
+
+    data class ModelFailure(val id: String, val name: String, val message: String)
 
     data class PermissionOption(val value: String, val name: String, val description: String?)
 
@@ -137,9 +140,25 @@ internal class HarnessApi(
 
     data class SessionExport(val url: String, val cookie: String?)
 
+    data class MessageFeedback(
+        val messageId: String,
+        val rating: String,
+        val note: String?,
+        val version: String,
+    )
+
+    data class MessageFeedbackMutation(
+        val ok: Boolean,
+        val item: MessageFeedback? = null,
+        val conflict: Boolean = false,
+        val errorCode: String? = null,
+    )
+
     class AuthenticationRequired : IOException("Cloudflare Access authentication is required")
 
     class RemoteFailure(val code: String, message: String) : IOException(message)
+
+    private class SettingsAccessForbidden : IOException("Harness settings access is forbidden")
 
     fun sessions(): List<Session> {
         val value = call("session.list", JSONObject())
@@ -306,7 +325,34 @@ internal class HarnessApi(
             currentEffort = current.optNullableString("reasoningEffort"),
             routable = value.getBoolean("routable"),
             items = items,
+            failures = value.optJSONArray("failures")?.objects()?.map { failure ->
+                ModelFailure(
+                    id = failure.optString("id"),
+                    name = failure.optString("name", failure.optString("id", "Provider")),
+                    message = failure.optString("message", "模型目录加载失败"),
+                )
+            }.orEmpty(),
         )
+    }
+
+    fun providerOnboarding(): ProviderOnboarding {
+        val providers = call("llm.providers", JSONObject())
+        val settings = try {
+            call("settings.describe", JSONObject())
+        } catch (_: SettingsAccessForbidden) {
+            return ProviderOnboarding.Unavailable("当前连接无权读取 Harness 设置")
+        }
+        val refs = ProviderOnboardingProjection.credentialRefs(providers, settings)
+        val credentials = if (refs.isEmpty()) {
+            JSONObject().put("credentials", JSONObject())
+        } else {
+            call("credentials.describe", JSONObject().put("refs", JSONArray(refs.toList())))
+        }
+        return ProviderOnboardingProjection.project(providers, settings, credentials)
+    }
+
+    fun setCredential(ref: String, value: String) {
+        call("credentials.set", JSONObject().put("ref", ref).put("value", value))
     }
 
     fun createSession(workspaceId: String?, agentPreset: String? = null): String {
@@ -338,10 +384,69 @@ internal class HarnessApi(
         call("session.rename", JSONObject().put("sessionId", sessionId).put("title", title))
     }
 
-    fun forkSession(sessionId: String): String = call(
+    fun forkSession(sessionId: String, atSeq: Long? = null): String = call(
         "session.fork",
-        JSONObject().put("sessionId", sessionId),
+        JSONObject().put("sessionId", sessionId).apply {
+            if (atSeq != null) put("atSeq", atSeq)
+        },
     ).getString("sessionId")
+
+    fun messageFeedback(sessionId: String): List<MessageFeedback> {
+        val result = callRemote("messageFeedback/list", JSONObject().put("sessionId", sessionId))
+        if (!result.optBoolean("ok")) {
+            val error = result.optJSONObject("error")
+            throw RemoteFailure(error?.optString("code", "feedback-list-failed").orEmpty(), "Message feedback could not be loaded")
+        }
+        return result.getJSONObject("value").getJSONArray("items").objects().map(::parseMessageFeedback)
+    }
+
+    fun putMessageFeedback(
+        sessionId: String,
+        messageId: String,
+        rating: String,
+        note: String?,
+        ifVersion: String?,
+    ): MessageFeedbackMutation {
+        require(rating == "positive" || rating == "negative")
+        val result = callRemote("messageFeedback/put", JSONObject().apply {
+            put("sessionId", sessionId)
+            put("messageId", messageId)
+            put("rating", rating)
+            if (note != null) put("note", note)
+            put("ifVersion", ifVersion ?: JSONObject.NULL)
+        })
+        return parseMessageFeedbackMutation(result, deleted = false)
+    }
+
+    fun deleteMessageFeedback(sessionId: String, item: MessageFeedback): MessageFeedbackMutation {
+        val result = callRemote("messageFeedback/delete", JSONObject()
+            .put("sessionId", sessionId)
+            .put("messageId", item.messageId)
+            .put("ifVersion", item.version))
+        return parseMessageFeedbackMutation(result, deleted = true)
+    }
+
+    private fun parseMessageFeedbackMutation(result: JSONObject, deleted: Boolean): MessageFeedbackMutation {
+        if (result.optBoolean("ok")) {
+            val item = if (deleted) null else result.getJSONObject("value").let(::parseMessageFeedback)
+            return MessageFeedbackMutation(ok = true, item = item)
+        }
+        val error = result.optJSONObject("error") ?: JSONObject()
+        val code = error.optString("code", "feedback-failed")
+        return MessageFeedbackMutation(
+            ok = false,
+            item = error.optJSONObject("current")?.let(::parseMessageFeedback),
+            conflict = code == "version-conflict",
+            errorCode = code,
+        )
+    }
+
+    private fun parseMessageFeedback(item: JSONObject): MessageFeedback = MessageFeedback(
+        messageId = item.getString("messageId"),
+        rating = item.getString("rating"),
+        note = item.optNullableString("note"),
+        version = item.getString("version"),
+    )
 
     fun selectModel(sessionId: String, model: Model, effort: String?) {
         call("session.selectModel", JSONObject().apply {
@@ -493,6 +598,15 @@ internal class HarnessApi(
     }
 
     private fun call(method: String, payload: JSONObject): JSONObject {
+        return callWire(method, payload)
+    }
+
+    private fun callRemote(endpoint: String, request: JSONObject): JSONObject = callWire(
+        endpoint,
+        JSONObject().put("args", JSONObject().put("request", request)),
+    )
+
+    private fun callWire(method: String, payload: JSONObject): JSONObject {
         val rpcId = UUID.randomUUID().toString()
         val envelope = JSONObject().apply {
             put("type", "client-request")
@@ -516,7 +630,11 @@ internal class HarnessApi(
         try {
             connection.outputStream.use { it.write(envelope.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
-            if (status in 300..399 || status == 401 || status == 403) throw AuthenticationRequired()
+            when (classifyHarnessHttpFailure(method, status)) {
+                HarnessHttpFailure.AUTHENTICATION -> throw AuthenticationRequired()
+                HarnessHttpFailure.SETTINGS_ACCESS_FORBIDDEN -> throw SettingsAccessForbidden()
+                HarnessHttpFailure.HTTP, null -> Unit
+            }
             val contentType = connection.contentType.orEmpty().lowercase()
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
@@ -536,6 +654,20 @@ internal class HarnessApi(
             connection.disconnect()
         }
     }
+}
+
+internal enum class HarnessHttpFailure {
+    AUTHENTICATION,
+    SETTINGS_ACCESS_FORBIDDEN,
+    HTTP,
+}
+
+internal fun classifyHarnessHttpFailure(method: String, status: Int): HarnessHttpFailure? = when {
+    status in 200..299 -> null
+    status in 300..399 || status == 401 -> HarnessHttpFailure.AUTHENTICATION
+    status == 403 && method == "settings.describe" -> HarnessHttpFailure.SETTINGS_ACCESS_FORBIDDEN
+    status == 403 -> HarnessHttpFailure.AUTHENTICATION
+    else -> HarnessHttpFailure.HTTP
 }
 
 internal fun commandExecutionPayload(sessionId: String, command: String): JSONObject = JSONObject().put(
