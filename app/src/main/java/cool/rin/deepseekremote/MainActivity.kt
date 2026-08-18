@@ -7,6 +7,8 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -36,6 +38,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
 import android.window.OnBackInvokedDispatcher
 import android.webkit.CookieManager
@@ -60,6 +63,9 @@ import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
@@ -67,8 +73,12 @@ class MainActivity : Activity() {
     private var themePreference = AppThemePreference.DARK
     private var darkTheme = true
     private lateinit var palette: AppPalette
+    private var languagePreference = AppLanguagePreference.SYSTEM
+    private var appLanguage = AppLanguage.ENGLISH
     private var serverUrl: String? = null
-    private val api = HarnessApi(baseUrl = { serverUrl ?: throw IOException("尚未配置 Harness 服务器") })
+    private val api = HarnessApi(baseUrl = {
+        serverUrl ?: throw IOException(tr("尚未配置 Harness 服务器", "Harness server is not configured"))
+    })
     private val worker = Executors.newSingleThreadExecutor()
     private val streamWorker = Executors.newSingleThreadExecutor()
     private val mainHandler by lazy { android.os.Handler(mainLooper) }
@@ -96,6 +106,7 @@ class MainActivity : Activity() {
     private lateinit var drawerPanel: LinearLayout
     private lateinit var drawerToolbarHost: FrameLayout
     private lateinit var sessionList: LinearLayout
+    private var commandPopup: PopupWindow? = null
 
     private var sessions = emptyList<HarnessApi.Session>()
     private var drawerWorkspaces = emptyList<HarnessApi.Workspace>()
@@ -111,6 +122,10 @@ class MainActivity : Activity() {
     private var currentStats = HarnessApi.ConversationStats()
     private var currentTodos = emptyList<HarnessApi.TodoItem>()
     private var currentContextUsage: HarnessApi.ContextUsage? = null
+    private var feedbackLoadedSessionId: String? = null
+    private var feedbackLoadingSessionId: String? = null
+    private val messageFeedback = mutableMapOf<String, HarnessApi.MessageFeedback>()
+    private val feedbackPending = mutableSetOf<String>()
     private var todosExpanded = false
     private val pendingApprovalsBySession = mutableMapOf<String, HarnessApi.PendingApproval>()
     private var approvalResponding = false
@@ -126,6 +141,8 @@ class MainActivity : Activity() {
     private var debugControlsPreview = false
     private var debugApprovalPreview = false
     private var debugActivityPreview = false
+    private var debugMessageActionsPreview = false
+    private var debugProviderOnboardingPreview = false
     private var drawerSwipeTracking = false
     private var drawerSwipeConsuming = false
     private var drawerSwipeStartX = 0f
@@ -137,6 +154,15 @@ class MainActivity : Activity() {
     private var knownAssistantKeysBeforePrompt = emptySet<String>()
     private var animateNextAssistant = false
     private var lastMessages = emptyList<ChatMessage>()
+    private var forceMessageScrollToBottom = true
+    private var pendingMessageScrollRestore: ViewTreeObserver.OnPreDrawListener? = null
+    private var providerOnboardingCheckRunning = false
+    private var providerOnboardingChecked = false
+    private var providerOnboardingDismissed = false
+    private var providerUnavailableShouldExplain = false
+    private var providerOnboardingDialog: Dialog? = null
+    private var pendingProviderReadyAction: (() -> Unit)? = null
+    private var lastCredentialFailureKey: String? = null
     private var liveRefreshScheduled = false
     private val liveRefresh = Runnable {
         liveRefreshScheduled = false
@@ -159,6 +185,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).let { prefs ->
+            languagePreference = AppLanguagePreference.fromStored(prefs.getString(PREF_LANGUAGE, null))
+            appLanguage = languagePreference.resolve(systemLanguageTag())
             themePreference = AppThemePreference.fromStored(prefs.getString(PREF_THEME, null))
             darkTheme = themePreference.resolvesDark(systemDarkAppearance())
             palette = if (darkTheme) AppPalettes.DARK else AppPalettes.LIGHT
@@ -172,6 +200,8 @@ class MainActivity : Activity() {
         debugControlsPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_CONTROLS_PREVIEW, false)
         debugApprovalPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_APPROVAL_PREVIEW, false)
         debugActivityPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_ACTIVITY_PREVIEW, false)
+        debugMessageActionsPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_MESSAGE_ACTIONS_PREVIEW, false)
+        debugProviderOnboardingPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_PROVIDER_ONBOARDING_PREVIEW, false)
         pendingOpenSessionId = intent.getStringExtra(TaskMonitorService.EXTRA_OPEN_SESSION_ID)
         configureWindow()
         setContentView(buildScreen())
@@ -179,6 +209,8 @@ class MainActivity : Activity() {
         configureAuthWebView()
         configureBackNavigation()
         when {
+            debugProviderOnboardingPreview -> renderDebugProviderOnboardingPreview()
+            debugMessageActionsPreview -> renderDebugMessageActionsPreview()
             debugActivityPreview -> renderDebugActivityPreview()
             debugApprovalPreview -> renderDebugApprovalPreview()
             debugControlsPreview -> renderDebugControlsPreview()
@@ -190,9 +222,11 @@ class MainActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (themePreference == AppThemePreference.SYSTEM &&
+        val themeChanged = themePreference == AppThemePreference.SYSTEM &&
             darkTheme != themePreference.resolvesDark(systemDarkAppearance(newConfig))
-        ) {
+        val languageChanged = languagePreference == AppLanguagePreference.SYSTEM &&
+            appLanguage != languagePreference.resolve(systemLanguageTag(newConfig))
+        if (themeChanged || languageChanged) {
             recreate()
         }
     }
@@ -261,6 +295,8 @@ class MainActivity : Activity() {
                     intent.hasExtra(EXTRA_DEBUG_CONTROLS_PREVIEW) ||
                     intent.hasExtra(EXTRA_DEBUG_APPROVAL_PREVIEW)
                     || intent.hasExtra(EXTRA_DEBUG_ACTIVITY_PREVIEW)
+                    || intent.hasExtra(EXTRA_DEBUG_MESSAGE_ACTIONS_PREVIEW)
+                    || intent.hasExtra(EXTRA_DEBUG_PROVIDER_ONBOARDING_PREVIEW)
                 )
         ) {
             recreate()
@@ -307,7 +343,58 @@ class MainActivity : Activity() {
         renderStats()
         renderMessages(emptyList())
         renderComposerSeat()
-        updateStatus("已连接", STATUS_CONNECTED)
+        updateStatus(tr("已连接", "Connected"), STATUS_CONNECTED)
+    }
+
+    private fun renderDebugProviderOnboardingPreview() {
+        currentSession = null
+        renderHeader()
+        renderControls()
+        renderStats()
+        renderMessages(emptyList())
+        renderComposerSeat()
+        updateStatus(tr("已连接", "Connected"), STATUS_CONNECTED)
+        messageScroll.post {
+            showApiKeyOnboarding(
+                ProviderOnboarding.MissingCredential("DeepSeek", "DEEPSEEK_API_KEY"),
+                autoFocus = false,
+            )
+        }
+    }
+
+    private fun renderDebugMessageActionsPreview() {
+        currentSession = HarnessApi.Session(
+            id = "debug-message-actions",
+            title = tr("消息动作栏", "Message actions"),
+            cwd = "/workspace",
+            agentPreset = null,
+            updatedAt = System.currentTimeMillis(),
+            running = false,
+            blank = false,
+        )
+        renderHeader()
+        renderControls()
+        renderStats()
+        renderMessages(listOf(
+            ChatMessage(
+                key = "debug-actions-answer",
+                role = ChatMessage.Role.ASSISTANT,
+                text = tr(
+                    "DeepSeek Harness 的助手回复会在最后一条完成消息下显示官方动作栏。",
+                    "A completed DeepSeek Harness response shows the official action strip below the final message.",
+                ),
+                time = System.currentTimeMillis(),
+                assistantFooter = AssistantFooter(
+                    messageId = "debug-actions-message",
+                    atSeq = 42L,
+                    runMs = 7_000L,
+                    ttftMs = 1_100L,
+                    tokensPerSecond = 88.0,
+                ),
+            ),
+        ))
+        renderComposerSeat()
+        updateStatus(tr("已连接", "Connected"), STATUS_CONNECTED)
     }
 
     private fun renderDebugTodoPreview() {
@@ -362,7 +449,7 @@ class MainActivity : Activity() {
             ),
         ))
         renderComposerSeat()
-        updateStatus("运行中", STATUS_CONNECTED)
+        updateStatus(tr("运行中", "Running"), STATUS_CONNECTED)
     }
 
     private fun renderDebugApprovalPreview() {
@@ -409,7 +496,7 @@ class MainActivity : Activity() {
             ),
         ))
         renderComposerSeat()
-        updateStatus("运行中", STATUS_CONNECTED)
+        updateStatus(tr("运行中", "Running"), STATUS_CONNECTED)
     }
 
     private fun renderDebugActivityPreview() {
@@ -451,7 +538,7 @@ class MainActivity : Activity() {
             ChatMessage("debug-max", ChatMessage.Role.ACTIVITY, "The reply was cut off because it reached the output limit. Send “continue” to keep going.", 6L, title = "Output token limit reached", state = ChatMessage.State.STOPPED, activityKind = ChatMessage.ActivityKind.WARNING),
         ))
         renderComposerSeat()
-        updateStatus("已连接", STATUS_CONNECTED)
+        updateStatus(tr("已连接", "Connected"), STATUS_CONNECTED)
     }
 
     @Suppress("DEPRECATION")
@@ -508,7 +595,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(6), dp(8), dp(5))
-            addView(iconAction(R.drawable.ic_sidebar_outline, "打开会话列表") { showSessions() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            addView(iconAction(R.drawable.ic_sidebar_outline, tr("打开会话列表", "Open session list")) { showSessions() }, LinearLayout.LayoutParams(dp(44), dp(44)))
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -523,13 +610,13 @@ class MainActivity : Activity() {
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     isClickable = true
-                    contentDescription = "选择模型"
+                    contentDescription = tr("选择模型", "Select model")
                     setOnClickListener { showModels() }
                     maxWidth = dp(150)
                 }
                 addView(titleView, LinearLayout.LayoutParams(WRAP, dp(32)))
                 statusView = TextView(this@MainActivity).apply {
-                    text = "· 连接中"
+                    text = tr("· 连接中", "· Connecting")
                     textSize = 10f
                     setTextColor(COLOR_MUTED)
                     includeFontPadding = false
@@ -539,7 +626,7 @@ class MainActivity : Activity() {
                 addView(statusView, LinearLayout.LayoutParams(WRAP, dp(32)).apply { marginStart = dp(6) })
             }, LinearLayout.LayoutParams(0, dp(44), 1f))
             addView(buildContextSeat(), LinearLayout.LayoutParams(WRAP, dp(34)).apply { marginEnd = dp(2) })
-            addView(iconAction(R.drawable.ic_new_session_harness, "新建会话") { showNewSession() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            addView(iconAction(R.drawable.ic_new_session_harness, tr("新建会话", "New session")) { showNewSession() }, LinearLayout.LayoutParams(dp(44), dp(44)))
         }, LinearLayout.LayoutParams(MATCH, 0, 1f))
         addView(View(this@MainActivity).apply { setBackgroundColor(COLOR_BORDER_SUBTLE) }, LinearLayout.LayoutParams(MATCH, dp(1)))
     }
@@ -550,7 +637,7 @@ class MainActivity : Activity() {
         visibility = View.GONE
         isClickable = true
         isFocusable = true
-        contentDescription = "上下文使用情况"
+        contentDescription = tr("上下文使用情况", "Context usage")
         setPadding(dp(8), 0, dp(8), 0)
         background = roundedStroke(Color.TRANSPARENT, COLOR_BORDER_SUBTLE, 17f)
         setOnClickListener { showContextDetails() }
@@ -577,7 +664,7 @@ class MainActivity : Activity() {
         messageScroll.addView(messageContainer, ViewGroup.LayoutParams(MATCH, WRAP))
         frame.addView(messageScroll, FrameLayout.LayoutParams(MATCH, MATCH))
         emptyView = TextView(this).apply {
-            text = "有什么可以帮忙的？\n\n在远端工作区开始一项任务"
+            text = tr("有什么可以帮忙的？\n\n在远端工作区开始一项任务", "What can I help with?\n\nStart a task in the remote workspace")
             textSize = 16f
             setTextColor(COLOR_TEXT)
             typeface = Typeface.DEFAULT_BOLD
@@ -604,7 +691,7 @@ class MainActivity : Activity() {
         }
         normalComposerCard = card
         composer = EditText(this@MainActivity).apply {
-            hint = "Message the agent"
+            hint = tr("给智能体发送消息", "Message the agent")
             textSize = 16f
             setTextColor(COLOR_TEXT)
             setHintTextColor(COLOR_MUTED)
@@ -631,10 +718,16 @@ class MainActivity : Activity() {
             imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
             setPadding(dp(11), dp(11), dp(11), dp(11))
             background = rounded(COLOR_MENU_SELECTED, 18f)
-            contentDescription = "Commands"
+            contentDescription = tr("命令", "Commands")
             isClickable = true
             isFocusable = true
-            setOnClickListener { showCommands(it) }
+            setOnClickListener { anchor ->
+                if (commandPopup?.isShowing == true) {
+                    commandPopup?.dismiss()
+                } else {
+                    showCommands(anchor)
+                }
+            }
         }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(4) })
         val leading = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -666,7 +759,7 @@ class MainActivity : Activity() {
             imageTintList = ColorStateList.valueOf(Color.WHITE)
             setPadding(dp(13), dp(13), dp(13), dp(13))
             background = rounded(COLOR_BLUE, 22f)
-            contentDescription = "发送消息"
+            contentDescription = tr("发送消息", "Send message")
             isClickable = true
             setOnClickListener { if (currentSession?.running == true) cancelCurrent() else sendPrompt() }
         }
@@ -745,7 +838,10 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
-            contentDescription = "To-dos，${if (todosExpanded) "点击收起" else "点击展开"}"
+            contentDescription = tr(
+                "待办事项，${if (todosExpanded) "点击收起" else "点击展开"}",
+                "To-dos, ${if (todosExpanded) "tap to collapse" else "tap to expand"}",
+            )
             setOnClickListener {
                 todosExpanded = !todosExpanded
                 renderTodoDock()
@@ -756,7 +852,7 @@ class MainActivity : Activity() {
             imageTintList = ColorStateList.valueOf(COLOR_MUTED)
         }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(10) })
         header.addView(TextView(this).apply {
-            text = "To-dos"
+            text = tr("待办事项", "To-dos")
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(COLOR_TEXT)
@@ -834,10 +930,10 @@ class MainActivity : Activity() {
             setBackgroundColor(COLOR_APPROVAL_STRIP)
             addView(TextView(this@MainActivity).apply {
                 background = rounded(COLOR_AMBER, 4f)
-                contentDescription = "等待审批"
+                contentDescription = tr("等待审批", "Waiting for approval")
             }, LinearLayout.LayoutParams(dp(8), dp(8)).apply { marginEnd = dp(10) })
             addView(TextView(this@MainActivity).apply {
-                text = "Waiting for approval"
+                text = tr("等待审批", "Waiting for approval")
                 textSize = 13f
                 setTextColor(COLOR_AMBER)
                 gravity = Gravity.CENTER_VERTICAL
@@ -848,7 +944,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(8))
             addView(TextView(this@MainActivity).apply {
-                text = approval.reason ?: "${approval.toolName} requires approval"
+                text = approval.reason ?: tr("${approval.toolName} 需要审批", "${approval.toolName} requires approval")
                 textSize = 15f
                 setLineSpacing(dp(3).toFloat(), 1f)
                 setTextColor(COLOR_TEXT)
@@ -876,10 +972,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(8), dp(16), dp(14))
-            addView(approvalButton("Reject", false, !approvalResponding) {
+            addView(approvalButton(tr("拒绝", "Reject"), false, !approvalResponding) {
                 answerApproval(approval, "rejected")
             }, LinearLayout.LayoutParams(dp(92), dp(44)).apply { marginEnd = dp(8) })
-            addView(approvalButton("Allow once", true, !approvalResponding) {
+            addView(approvalButton(tr("允许一次", "Allow once"), true, !approvalResponding) {
                 answerApproval(approval, "allowed-once")
             }, LinearLayout.LayoutParams(dp(122), dp(44)))
         }, LinearLayout.LayoutParams(MATCH, dp(66)))
@@ -915,7 +1011,7 @@ class MainActivity : Activity() {
                 mainHandler.post {
                     approvalResponding = false
                     renderComposerSeat()
-                    Toast.makeText(this, error.message ?: "Approval response failed", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, error.message ?: tr("审批响应失败", "Approval response failed"), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -975,7 +1071,7 @@ class MainActivity : Activity() {
                 setPadding(dp(2), dp(8), 0, dp(8))
                 addView(buildDrawerBrand(), LinearLayout.LayoutParams(dp(182), dp(24)))
                 addView(android.widget.Space(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
-                addView(drawerIconButton(R.drawable.ic_sidebar_outline, "关闭侧栏") { closeDrawer() })
+                addView(drawerIconButton(R.drawable.ic_sidebar_outline, tr("关闭侧栏", "Close sidebar")) { closeDrawer() })
             }, LinearLayout.LayoutParams(MATCH, dp(60)).apply { bottomMargin = dp(8) })
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -983,14 +1079,14 @@ class MainActivity : Activity() {
                 isClickable = true
                 isFocusable = true
                 background = roundedStroke(COLOR_DRAWER_BUTTON, COLOR_DRAWER_BORDER, 12f)
-                contentDescription = "New Session"
+                contentDescription = tr("新建会话", "New Session")
                 setOnClickListener { closeDrawer(); showNewSession() }
                 addView(ImageView(this@MainActivity).apply {
                     setImageResource(R.drawable.ic_new_session_harness)
                     imageTintList = ColorStateList.valueOf(COLOR_DRAWER_PRIMARY)
                 }, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(6) })
                 addView(TextView(this@MainActivity).apply {
-                    text = "New Session"
+                    text = tr("新建会话", "New Session")
                     textSize = 14f
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     setTextColor(COLOR_DRAWER_PRIMARY)
@@ -1012,7 +1108,7 @@ class MainActivity : Activity() {
                 addView(sessionList, ViewGroup.LayoutParams(MATCH, WRAP))
             }, LinearLayout.LayoutParams(MATCH, 0, 1f))
             addView(TextView(this@MainActivity).apply {
-                text = "Settings"
+                text = tr("设置", "Settings")
                 textSize = 14f
                 typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 setTextColor(COLOR_DRAWER_PRIMARY)
@@ -1112,7 +1208,7 @@ class MainActivity : Activity() {
                     setPadding(dp(7), dp(7), dp(7), dp(7))
                 }, LinearLayout.LayoutParams(dp(32), dp(32)))
                 val input = EditText(this@MainActivity).apply {
-                    hint = "Search sessions..."
+                    hint = tr("搜索会话…", "Search sessions…")
                     setText(drawerSearchQuery)
                     setSingleLine(true)
                     textSize = 13f
@@ -1130,7 +1226,7 @@ class MainActivity : Activity() {
                     })
                 }
                 addView(input, LinearLayout.LayoutParams(0, dp(38), 1f))
-                addView(drawerIconButton(R.drawable.ic_close_outline, "Clear search") {
+                addView(drawerIconButton(R.drawable.ic_close_outline, tr("清除搜索", "Clear search")) {
                     drawerSearchQuery = ""
                     drawerSearchExpanded = false
                     hideKeyboard()
@@ -1152,21 +1248,21 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@MainActivity).apply {
-                text = "Workspaces"
+                text = tr("工作区", "Workspaces")
                 textSize = 14f
                 typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 setTextColor(COLOR_DRAWER_TERTIARY)
                 gravity = Gravity.CENTER_VERTICAL
                 includeFontPadding = false
             }, LinearLayout.LayoutParams(0, dp(36), 1f).apply { marginStart = dp(2) })
-            addView(drawerIconButton(R.drawable.ic_search_outline, "Search sessions", startMarginDp = 4) {
+            addView(drawerIconButton(R.drawable.ic_search_outline, tr("搜索会话", "Search sessions"), startMarginDp = 4) {
                 drawerSearchExpanded = true
                 renderDrawerToolbar()
             })
-            val viewOptions = drawerIconButton(R.drawable.ic_tune_outline, "View options", startMarginDp = 4) {}
+            val viewOptions = drawerIconButton(R.drawable.ic_tune_outline, tr("视图选项", "View options"), startMarginDp = 4) {}
             viewOptions.setOnClickListener { showDrawerViewOptions(viewOptions) }
             addView(viewOptions)
-            addView(drawerIconButton(R.drawable.ic_folder_add_outline, "Add workspace", startMarginDp = 4) {
+            addView(drawerIconButton(R.drawable.ic_folder_add_outline, tr("添加工作区", "Add workspace"), startMarginDp = 4) {
                 showAddWorkspaceDialog()
             })
         }, FrameLayout.LayoutParams(MATCH, dp(36), Gravity.CENTER_VERTICAL))
@@ -1206,15 +1302,15 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(dp(30), MATCH))
         }
-        surface.addView(header("Group by"), LinearLayout.LayoutParams(MATCH, dp(34)))
-        surface.addView(option("WorkSpace", drawerGroupByWorkspace) { setDrawerGroup(true) }, LinearLayout.LayoutParams(MATCH, dp(48)))
-        surface.addView(option("In one list", !drawerGroupByWorkspace) { setDrawerGroup(false) }, LinearLayout.LayoutParams(MATCH, dp(48)))
+        surface.addView(header(tr("分组方式", "Group by")), LinearLayout.LayoutParams(MATCH, dp(34)))
+        surface.addView(option(tr("工作区", "Workspace"), drawerGroupByWorkspace) { setDrawerGroup(true) }, LinearLayout.LayoutParams(MATCH, dp(48)))
+        surface.addView(option(tr("单一列表", "In one list"), !drawerGroupByWorkspace) { setDrawerGroup(false) }, LinearLayout.LayoutParams(MATCH, dp(48)))
         surface.addView(View(this).apply { setBackgroundColor(COLOR_BORDER_SUBTLE) }, LinearLayout.LayoutParams(MATCH, dp(1)).apply {
             topMargin = dp(5); bottomMargin = dp(5)
         })
-        surface.addView(header("Order by"), LinearLayout.LayoutParams(MATCH, dp(34)))
-        surface.addView(option("Manual", !drawerOrderLastUpdated) { setDrawerOrder(false) }, LinearLayout.LayoutParams(MATCH, dp(48)))
-        surface.addView(option("Last updated", drawerOrderLastUpdated) { setDrawerOrder(true) }, LinearLayout.LayoutParams(MATCH, dp(48)))
+        surface.addView(header(tr("排序方式", "Order by")), LinearLayout.LayoutParams(MATCH, dp(34)))
+        surface.addView(option(tr("手动", "Manual"), !drawerOrderLastUpdated) { setDrawerOrder(false) }, LinearLayout.LayoutParams(MATCH, dp(48)))
+        surface.addView(option(tr("最近更新", "Last updated"), drawerOrderLastUpdated) { setDrawerOrder(true) }, LinearLayout.LayoutParams(MATCH, dp(48)))
         popup = popupFor(anchor, surface, 220)
         anchor.background = rounded(COLOR_SELECTED, 20f)
         popup.setOnDismissListener { anchor.background = null }
@@ -1235,7 +1331,7 @@ class MainActivity : Activity() {
 
     private fun showAddWorkspaceDialog(initialPath: String? = null) {
         val pathInput = EditText(this).apply {
-            hint = "Absolute host path"
+            hint = tr("主机绝对路径", "Absolute host path")
             setSingleLine(true)
             textSize = 13f
             setTextColor(COLOR_TEXT)
@@ -1244,7 +1340,7 @@ class MainActivity : Activity() {
             setPadding(dp(12), 0, dp(12), 0)
         }
         val newFolder = TextView(this).apply {
-            text = "New folder"
+            text = tr("新建文件夹", "New folder")
             textSize = 12f
             setTextColor(COLOR_CONTROL_TEXT)
             gravity = Gravity.CENTER
@@ -1259,7 +1355,7 @@ class MainActivity : Activity() {
         }
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val hiddenToggle = TextView(this).apply {
-            text = "○  Show hidden files"
+            text = tr("○  显示隐藏文件", "○  Show hidden files")
             textSize = 12f
             setTextColor(COLOR_MUTED)
             gravity = Gravity.CENTER_VERTICAL
@@ -1267,7 +1363,7 @@ class MainActivity : Activity() {
             isClickable = true
         }
         val cancelButton = TextView(this).apply {
-            text = "Cancel"
+            text = tr("取消", "Cancel")
             textSize = 13f
             setTextColor(COLOR_TEXT)
             gravity = Gravity.CENTER
@@ -1275,7 +1371,7 @@ class MainActivity : Activity() {
             isClickable = true
         }
         val openButton = TextView(this).apply {
-            text = "Open"
+            text = tr("打开", "Open")
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(palette.primaryButtonText)
@@ -1295,7 +1391,7 @@ class MainActivity : Activity() {
             setPadding(dp(18), dp(18), dp(18), dp(18))
             background = roundedStroke(COLOR_MENU, COLOR_BORDER, 16f)
             addView(TextView(this@MainActivity).apply {
-                text = "Select Workspace Directory"
+                text = tr("选择工作区目录", "Select Workspace Directory")
                 textSize = 17f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(COLOR_TEXT)
@@ -1346,7 +1442,7 @@ class MainActivity : Activity() {
             pathInput.setSelection(pathInput.text.length)
             list.removeAllViews()
             list.addView(TextView(this).apply {
-                text = "⌂  Home"
+                text = tr("⌂  主目录", "⌂  Home")
                 textSize = 13f
                 setTextColor(COLOR_CONTROL_TEXT)
                 gravity = Gravity.CENTER_VERTICAL
@@ -1368,7 +1464,7 @@ class MainActivity : Activity() {
         loadDirectory = { path ->
             list.removeAllViews()
             list.addView(TextView(this).apply {
-                text = "Loading…"
+                text = tr("正在加载…", "Loading…")
                 textSize = 13f
                 setTextColor(COLOR_MUTED)
                 setPadding(dp(8), dp(18), dp(8), dp(18))
@@ -1381,7 +1477,7 @@ class MainActivity : Activity() {
                     mainHandler.post {
                         list.removeAllViews()
                         list.addView(TextView(this).apply {
-                            text = error.message ?: "Unable to list directory"
+                            text = error.message ?: tr("无法列出目录", "Unable to list directory")
                             textSize = 12f
                             setTextColor(COLOR_RED)
                             setPadding(dp(8), dp(18), dp(8), dp(18))
@@ -1398,13 +1494,13 @@ class MainActivity : Activity() {
         }
         hiddenToggle.setOnClickListener {
             showHidden = !showHidden
-            hiddenToggle.text = if (showHidden) "●  Show hidden files" else "○  Show hidden files"
+            hiddenToggle.text = if (showHidden) tr("●  显示隐藏文件", "●  Show hidden files") else tr("○  显示隐藏文件", "○  Show hidden files")
             renderDirectory()
         }
         newFolder.setOnClickListener {
             val listing = current ?: return@setOnClickListener
             val name = EditText(this).apply {
-                hint = "Folder name"
+                hint = tr("文件夹名称", "Folder name")
                 setSingleLine(true)
                 setTextColor(COLOR_TEXT)
                 setHintTextColor(COLOR_MUTED)
@@ -1412,8 +1508,8 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("New folder in \"${listing.path.substringAfterLast('/').ifBlank { listing.path }}\"")
                 .setView(name)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Create") { _, _ ->
+                .setNegativeButton(tr("取消", "Cancel"), null)
+                .setPositiveButton(tr("创建", "Create")) { _, _ ->
                     val value = name.text.toString().trim()
                     if (value.isNotBlank()) worker.execute {
                         runCatching { api.createDirectory(listing.path, value) }
@@ -1436,13 +1532,13 @@ class MainActivity : Activity() {
                             drawerWorkspaces = latest
                             renderSessionList()
                             dialog.dismiss()
-                            Toast.makeText(this, "Added ${workspace.title}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, tr("已添加 ${workspace.title}", "Added ${workspace.title}"), Toast.LENGTH_SHORT).show()
                         }
                     } catch (error: Exception) {
                         mainHandler.post {
                             openButton.isEnabled = true
                             openButton.alpha = 1f
-                            Toast.makeText(this, error.message ?: "Unable to add workspace", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this, error.message ?: tr("无法添加工作区", "Unable to add workspace"), Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -1465,7 +1561,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(8), 0, dp(1), 0)
                 addView(TextView(this@MainActivity).apply {
-                    text = "Settings"
+                    text = tr("设置", "Settings")
                     textSize = 14f
                     typeface = Typeface.DEFAULT
                     setTextColor(COLOR_TEXT)
@@ -1476,7 +1572,7 @@ class MainActivity : Activity() {
                     setImageResource(R.drawable.ic_close_outline)
                     imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
                     background = null
-                    contentDescription = "Close settings"
+                    contentDescription = tr("关闭设置", "Close settings")
                     setPadding(dp(8), dp(8), dp(8), dp(8))
                     setOnClickListener { popup.dismiss() }
                 }, LinearLayout.LayoutParams(dp(32), dp(32)))
@@ -1510,13 +1606,16 @@ class MainActivity : Activity() {
                 topMargin = dp(2)
             })
         }
-        addSettingsRow(R.drawable.ic_terminal_harness, "Server connection") {
+        addSettingsRow(R.drawable.ic_terminal_harness, tr("服务器连接", "Server connection")) {
             showServerSetup()
         }
-        addSettingsRow(R.drawable.ic_appearance_outline, "Appearance") {
+        addSettingsRow(R.drawable.ic_language_outline, tr("语言", "Language")) {
+            showLanguageDialog()
+        }
+        addSettingsRow(R.drawable.ic_appearance_outline, tr("外观", "Appearance")) {
             showAppearanceDialog()
         }
-        addSettingsRow(R.drawable.ic_settings_outline, "Web Settings") {
+        addSettingsRow(R.drawable.ic_settings_outline, tr("Web 设置", "Web Settings")) {
             serverUrl?.let { openExternal(Uri.parse(it)) }
         }
         popup = PopupWindow(panel, dp(284), WRAP, true).apply {
@@ -1526,6 +1625,83 @@ class MainActivity : Activity() {
             animationStyle = android.R.style.Animation_Dialog
             showAtLocation(anchor, Gravity.START or Gravity.BOTTOM, dp(16), dp(68))
         }
+    }
+
+    private fun showLanguageDialog() {
+        val dialog = Dialog(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(18))
+            background = roundedStroke(COLOR_WEB_SETTINGS, COLOR_WEB_SETTINGS_BORDER, 18f)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = tr("语言", "Language")
+                    textSize = 17f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(COLOR_TEXT)
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(0, dp(42), 1f))
+                addView(ImageButton(this@MainActivity).apply {
+                    setImageResource(R.drawable.ic_close_outline)
+                    imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
+                    background = null
+                    contentDescription = tr("关闭语言设置", "Close language settings")
+                    setPadding(dp(10), dp(10), dp(10), dp(10))
+                    setOnClickListener { dialog.dismiss() }
+                }, LinearLayout.LayoutParams(dp(40), dp(40)))
+            }, LinearLayout.LayoutParams(MATCH, dp(42)))
+        }
+        val choices = listOf(
+            AppLanguagePreference.CHINESE to "中文",
+            AppLanguagePreference.ENGLISH to "English",
+            AppLanguagePreference.SYSTEM to tr("跟随系统", "System"),
+        )
+        choices.forEach { (preference, label) ->
+            val selected = preference == languagePreference
+            panel.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), 0, dp(14), 0)
+                isClickable = true
+                isFocusable = true
+                background = if (selected) rounded(COLOR_SELECTED, 10f) else null
+                addView(TextView(this@MainActivity).apply {
+                    text = label
+                    textSize = 14f
+                    setTextColor(COLOR_TEXT)
+                    includeFontPadding = false
+                    gravity = Gravity.CENTER_VERTICAL
+                }, LinearLayout.LayoutParams(0, MATCH, 1f))
+                if (selected) addView(TextView(this@MainActivity).apply {
+                    text = "✓"
+                    textSize = 16f
+                    setTextColor(COLOR_BLUE)
+                    gravity = Gravity.CENTER
+                }, LinearLayout.LayoutParams(dp(28), MATCH))
+                setOnClickListener {
+                    dialog.dismiss()
+                    setLanguagePreference(preference)
+                }
+            }, LinearLayout.LayoutParams(MATCH, dp(48)).apply { topMargin = dp(4) })
+        }
+        dialog.setContentView(panel)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            dialog.window?.setLayout((resources.displayMetrics.widthPixels - dp(32)).coerceAtMost(dp(420)), WRAP)
+        }
+        dialog.show()
+    }
+
+    private fun setLanguagePreference(preference: AppLanguagePreference) {
+        if (languagePreference == preference) return
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putString(PREF_LANGUAGE, preference.storedValue)
+            .apply()
+        recreate()
     }
 
     private fun showAppearanceDialog() {
@@ -1538,7 +1714,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 addView(TextView(this@MainActivity).apply {
-                    text = "Appearance"
+                    text = tr("外观", "Appearance")
                     textSize = 17f
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     setTextColor(COLOR_TEXT)
@@ -1548,7 +1724,7 @@ class MainActivity : Activity() {
                     setImageResource(R.drawable.ic_close_outline)
                     imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
                     background = null
-                    contentDescription = "Close appearance"
+                    contentDescription = tr("关闭外观设置", "Close appearance")
                     setPadding(dp(10), dp(10), dp(10), dp(10))
                     setOnClickListener { dialog.dismiss() }
                 }, LinearLayout.LayoutParams(dp(40), dp(40)))
@@ -1556,9 +1732,9 @@ class MainActivity : Activity() {
         }
 
         val choices = listOf(
-            Triple(AppThemePreference.LIGHT, "Light", R.drawable.ic_theme_light),
-            Triple(AppThemePreference.DARK, "Dark", R.drawable.ic_theme_dark),
-            Triple(AppThemePreference.SYSTEM, "System", R.drawable.ic_theme_system),
+            Triple(AppThemePreference.LIGHT, tr("浅色", "Light"), R.drawable.ic_theme_light),
+            Triple(AppThemePreference.DARK, tr("深色", "Dark"), R.drawable.ic_theme_dark),
+            Triple(AppThemePreference.SYSTEM, tr("跟随系统", "System"), R.drawable.ic_theme_system),
         )
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1571,7 +1747,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
                 isClickable = true
                 isFocusable = true
-                contentDescription = "$label theme${if (selected) ", selected" else ""}"
+                contentDescription = if (selected) tr("$label，已选择", "$label theme, selected") else label
                 background = roundedStroke(
                     if (selected) COLOR_SELECTED else Color.TRANSPARENT,
                     if (selected) COLOR_DRAWER_TERTIARY else COLOR_BORDER,
@@ -1596,7 +1772,7 @@ class MainActivity : Activity() {
             })
         }
         panel.addView(TextView(this).apply {
-            text = "Appearance"
+            text = tr("外观", "Appearance")
             textSize = 13f
             setTextColor(COLOR_MUTED)
             includeFontPadding = false
@@ -1625,18 +1801,23 @@ class MainActivity : Activity() {
     private fun systemDarkAppearance(configuration: Configuration = resources.configuration): Boolean =
         configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
-    private fun showServerSetup() {
+    private fun systemLanguageTag(configuration: Configuration = resources.configuration): String =
+        configuration.locales.get(0)?.toLanguageTag().orEmpty()
+
+    private fun tr(chinese: String, english: String): String = appLanguage.text(chinese, english)
+
+    private fun showServerSetup(initialAddress: String? = serverUrl) {
         val required = serverUrl == null
-        if (required) updateStatus("未配置", STATUS_VERIFY)
+        if (required) updateStatus(tr("未配置", "Not configured"), STATUS_VERIFY)
         val addressInput = EditText(this).apply {
-            hint = "服务器地址"
+            hint = tr("服务器地址", "Server address")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true
             textSize = 15f
             setTextColor(COLOR_TEXT)
             setHintTextColor(COLOR_MUTED)
             background = roundedStroke(COLOR_CONTROL, COLOR_BORDER, 10f)
-            setText(serverUrl.orEmpty())
+            setText(initialAddress.orEmpty())
             setSelectAllOnFocus(false)
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
@@ -1646,48 +1827,65 @@ class MainActivity : Activity() {
             visibility = View.GONE
             setPadding(0, dp(10), 0, 0)
         }
+        val connectionListButton = serverDialogAction(tr("连接列表", "Connection list"), COLOR_MUTED)
+        val cancelButton = if (required) null else serverDialogAction(tr("取消", "Cancel"), COLOR_MUTED)
+        val connectButton = serverDialogAction(tr("测试并连接", "Test and connect"), COLOR_BLUE)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(6), dp(24), 0)
+            setPadding(dp(24), dp(6), dp(24), dp(10))
             addView(TextView(this@MainActivity).apply {
-                text = "输入运行 Harness 的服务器地址。公网地址必须使用 HTTPS；HTTP 仅允许私有内网地址。\n\n示例：https://harness.example.com 或 http://192.168.1.50:3000\n连接成功后仍可在 Settings 中更换。"
+                text = tr(
+                    "输入运行 Harness 的服务器地址。公网地址必须使用 HTTPS；HTTP 仅允许私有内网地址。\n\n示例：https://harness.example.com 或 http://192.168.1.50:3000\n连接成功后仍可在设置中更换。",
+                    "Enter the address of your Harness server. Public addresses must use HTTPS; HTTP is only allowed for private network addresses.\n\nExamples: https://harness.example.com or http://192.168.1.50:3000\nYou can change it later in Settings.",
+                )
                 textSize = 13f
                 setTextColor(COLOR_MUTED)
                 setPadding(0, 0, 0, dp(14))
             }, LinearLayout.LayoutParams(MATCH, WRAP))
             addView(addressInput, LinearLayout.LayoutParams(MATCH, WRAP))
             addView(errorView, LinearLayout.LayoutParams(MATCH, WRAP))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(connectionListButton, LinearLayout.LayoutParams(WRAP, dp(48)))
+                addView(android.widget.Space(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+                cancelButton?.let {
+                    addView(it, LinearLayout.LayoutParams(WRAP, dp(48)).apply { marginEnd = dp(2) })
+                }
+                addView(connectButton, LinearLayout.LayoutParams(WRAP, dp(48)))
+            }, LinearLayout.LayoutParams(MATCH, dp(58)).apply { topMargin = dp(10) })
         }
         val dialog = AlertDialog.Builder(this)
             .setCustomTitle(TextView(this).apply {
-                text = if (required) "连接 Harness" else "服务器连接"
+                text = if (required) tr("连接 Harness", "Connect to Harness") else tr("服务器连接", "Server connection")
                 textSize = 20f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(COLOR_TEXT)
                 setPadding(dp(24), dp(22), dp(24), dp(8))
             })
             .setView(content)
-            .setPositiveButton("测试并连接", null)
-            .apply { if (!required) setNegativeButton("取消", null) }
             .create()
         dialog.setCancelable(!required)
         dialog.setCanceledOnTouchOutside(!required)
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(rounded(COLOR_COMPOSER, 18f))
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(COLOR_BLUE)
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(COLOR_MUTED)
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            connectionListButton.setOnClickListener {
+                dialog.dismiss()
+                showConnectionList(required)
+            }
+            cancelButton?.setOnClickListener { dialog.dismiss() }
+            connectButton.setOnClickListener {
                 val candidate = try {
-                    ServerConfig.normalize(addressInput.text.toString())
+                    ServerConfig.normalize(addressInput.text.toString(), appLanguage)
                 } catch (error: IllegalArgumentException) {
                     errorView.text = error.message
                     errorView.visibility = View.VISIBLE
                     return@setOnClickListener
                 }
-                val connectButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
                 connectButton.isEnabled = false
+                connectButton.alpha = 0.45f
                 addressInput.isEnabled = false
-                errorView.text = "正在验证 Harness…"
+                errorView.text = tr("正在验证 Harness…", "Verifying Harness…")
                 errorView.setTextColor(COLOR_MUTED)
                 errorView.visibility = View.VISIBLE
                 worker.execute {
@@ -1710,13 +1908,67 @@ class MainActivity : Activity() {
                     } catch (error: Exception) {
                         mainHandler.post {
                             connectButton.isEnabled = true
+                            connectButton.alpha = 1f
                             addressInput.isEnabled = true
                             errorView.setTextColor(COLOR_RED)
-                            errorView.text = error.message ?: "无法连接或服务器不是兼容的 Harness"
+                            errorView.text = error.message ?: tr("无法连接或服务器不是兼容的 Harness", "Unable to connect, or the server is not a compatible Harness")
                         }
                     }
                 }
             }
+        }
+        dialog.show()
+    }
+
+    private fun serverDialogAction(label: String, color: Int) = TextView(this).apply {
+        text = label
+        textSize = 13f
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        setTextColor(color)
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        maxLines = 1
+        setPadding(dp(10), 0, dp(10), 0)
+        isClickable = true
+        isFocusable = true
+        contentDescription = label
+    }
+
+    private fun showConnectionList(connectionRequired: Boolean) {
+        val savedConnections = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getStringSet(PREF_SERVER_URLS, emptySet())
+            .orEmpty()
+            .plus(listOfNotNull(serverUrl))
+            .filter { runCatching { ServerConfig.normalize(it) }.isSuccess }
+            .sortedWith(compareByDescending<String> { it == serverUrl }.thenBy { it })
+        val builder = AlertDialog.Builder(this)
+            .setTitle(tr("连接列表", "Connection list"))
+            .setPositiveButton(tr("添加连接", "Add connection")) { _, _ -> showServerSetup("") }
+            .apply {
+                if (savedConnections.isEmpty()) {
+                    setMessage(tr("暂无已保存的连接。", "No saved connections yet."))
+                } else {
+                    val labels = savedConnections.map { address ->
+                        if (address == serverUrl) {
+                            tr("$address\n当前连接", "$address\nCurrent connection")
+                        } else {
+                            address
+                        }
+                    }
+                    setItems(labels.toTypedArray()) { dialog, index ->
+                        dialog.dismiss()
+                        showServerSetup(savedConnections[index])
+                    }
+                }
+                if (!connectionRequired) setNegativeButton(tr("取消", "Cancel"), null)
+            }
+        val dialog = builder.create()
+        dialog.setCancelable(!connectionRequired)
+        dialog.setCanceledOnTouchOutside(!connectionRequired)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(rounded(COLOR_COMPOSER, 18f))
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(COLOR_BLUE)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(COLOR_MUTED)
         }
         dialog.show()
     }
@@ -1728,10 +1980,24 @@ class MainActivity : Activity() {
         serverUrl = url
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().apply {
             putString(PREF_SERVER_URL, url)
+            val savedConnections = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getStringSet(PREF_SERVER_URLS, emptySet())
+                .orEmpty()
+                .toMutableSet()
+            savedConnections.add(url)
+            putStringSet(PREF_SERVER_URLS, savedConnections)
             if (changed) remove(PREF_DEFAULT_WORKSPACE_ID)
             apply()
         }
         if (changed) {
+            providerOnboardingDialog?.dismiss()
+            providerOnboardingDialog = null
+            providerOnboardingCheckRunning = false
+            providerOnboardingChecked = false
+            providerOnboardingDismissed = false
+            providerUnavailableShouldExplain = false
+            pendingProviderReadyAction = null
+            lastCredentialFailureKey = null
             sessions = emptyList()
             drawerWorkspaces = emptyList()
             manuallyExpandedWorkspaceKeys.clear()
@@ -1805,7 +2071,14 @@ class MainActivity : Activity() {
                     if (selected?.id == pendingOpenSessionId) pendingOpenSessionId = null
                     if (!paused) serverUrl?.let { TaskMonitorService.watch(this, it, newSessions) }
                     val keptStart = runningStartedAt.takeIf { currentSession?.id == selected?.id && currentSession?.running == true }
-                    if (currentSession?.id != selected?.id) todosExpanded = false
+                    if (currentSession?.id != selected?.id) {
+                        todosExpanded = false
+                        forceMessageScrollToBottom = true
+                        feedbackLoadedSessionId = null
+                        feedbackLoadingSessionId = null
+                        messageFeedback.clear()
+                        feedbackPending.clear()
+                    }
                     currentSession = selected
                     currentModels = models
                     currentControls = history?.controls ?: HarnessApi.SessionControls()
@@ -1819,8 +2092,10 @@ class MainActivity : Activity() {
                     renderControls()
                     renderStats()
                     renderMessages(history?.messages.orEmpty())
+                    maybeHandleCredentialFailure(history?.messages.orEmpty())
                     renderComposerSeat()
-                    updateStatus(if (selected?.running == true) "运行中" else "已连接", STATUS_CONNECTED)
+                    updateStatus(if (selected?.running == true) tr("运行中", "Running") else tr("已连接", "Connected"), STATUS_CONNECTED)
+                    maybeCheckProviderOnboarding()
                     if (runQueued) mainHandler.post { refresh(showSpinner = false) }
                 }
             } catch (_: HarnessApi.AuthenticationRequired) {
@@ -1833,8 +2108,8 @@ class MainActivity : Activity() {
                 mainHandler.post {
                     requestRunning = false
                     progress.visibility = View.GONE
-                    updateStatus("连接失败", STATUS_ERROR)
-                    if (showSpinner) Toast.makeText(this, error.message ?: "无法连接 Harness", Toast.LENGTH_LONG).show()
+                    updateStatus(tr("连接失败", "Connection failed"), STATUS_ERROR)
+                    if (showSpinner) Toast.makeText(this, error.message ?: tr("无法连接 Harness", "Unable to connect to Harness"), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -1849,7 +2124,7 @@ class MainActivity : Activity() {
         lastRenderedSignature = ""
         renderHeader()
         messageContainer.removeAllViews()
-        emptyView.text = "正在载入会话…"
+        emptyView.text = tr("正在载入会话…", "Loading session…")
         emptyView.visibility = View.VISIBLE
         refresh(showSpinner = true)
     }
@@ -1858,12 +2133,12 @@ class MainActivity : Activity() {
         val session = currentSession
         if (session == null) {
             titleView.text = "DeepSeek"
-            modelButton.text = "选择模型"
+            modelButton.text = tr("选择模型", "Select model")
             return
         }
-        titleView.text = session.title ?: if (session.blank) "新会话" else "未命名会话"
+        titleView.text = session.title ?: if (session.blank) tr("新会话", "New session") else tr("未命名会话", "Untitled session")
         val models = currentModels
-        if (models == null) modelButton.text = "载入模型…"
+        if (models == null) modelButton.text = tr("载入模型…", "Loading models…")
     }
 
     private fun renderControls() {
@@ -1871,11 +2146,15 @@ class MainActivity : Activity() {
         val current = models?.items?.firstOrNull {
             it.provider == models.currentProvider && it.id == models.currentModel
         }
-        modelButton.text = if (models == null) "载入模型…" else buildString {
-            append((current?.name ?: models.currentModel).removePrefix("DeepSeek-"))
-            (models.currentEffort ?: current?.defaultEffort)?.let { id ->
-                append("  ")
-                append(current?.efforts?.firstOrNull { it.first == id }?.second ?: id)
+        modelButton.text = when {
+            currentSession == null -> tr("选择模型", "Select model")
+            models == null -> tr("载入模型…", "Loading models…")
+            else -> buildString {
+                append((current?.name ?: models.currentModel).removePrefix("DeepSeek-"))
+                (models.currentEffort ?: current?.defaultEffort)?.let { id ->
+                    append("  ")
+                    append(current?.efforts?.firstOrNull { it.first == id }?.second ?: id)
+                }
             }
         }
         permissionButton.visibility = if (currentControls.permission == null) View.GONE else View.VISIBLE
@@ -1890,13 +2169,13 @@ class MainActivity : Activity() {
         permissionButton.compoundDrawablePadding = dp(4)
         val running = currentSession?.running == true
         sendButton.setImageResource(if (running) R.drawable.ic_stop_square else R.drawable.ic_send_harness)
-        sendButton.contentDescription = if (running) "停止当前任务" else "发送消息"
+        sendButton.contentDescription = if (running) tr("停止当前任务", "Stop current task") else tr("发送消息", "Send message")
         val context = currentContextUsage
         contextSeat.visibility = if (context == null) View.GONE else View.VISIBLE
         if (context != null) {
             contextPercentView.text = "${context.percent}%"
             contextMeterView.percent = context.percent
-            contextSeat.contentDescription = "${context.percent}% of context used，点击查看详情"
+            contextSeat.contentDescription = tr("已使用 ${context.percent}% 上下文，点击查看详情", "${context.percent}% of context used, tap for details")
         }
         updateSendState()
     }
@@ -1941,9 +2220,13 @@ class MainActivity : Activity() {
 
     private fun renderMessages(messages: List<ChatMessage>) {
         val signature = "${currentSession?.running}:${runningStartedAt}:" + messages.joinToString("|") {
-            "${it.key}:${it.text.hashCode()}:${it.detail?.hashCode()}:${it.pending}:${it.state}"
+            val feedback = it.assistantFooter?.messageId?.let(messageFeedback::get)
+            "${it.key}:${it.text.hashCode()}:${it.detail?.hashCode()}:${it.pending}:${it.state}:${it.assistantFooter}:${feedback?.rating}:${feedback?.note}:${it.assistantFooter?.messageId?.let(feedbackPending::contains) == true}"
         }
         if (signature == lastRenderedSignature) return
+        val previousScrollY = messageScroll.scrollY
+        val followBottom = shouldFollowMessageBottom(forceMessageScrollToBottom)
+        forceMessageScrollToBottom = false
         lastRenderedSignature = signature
         if (animateNextAssistant) {
             messages.lastOrNull {
@@ -1961,23 +2244,65 @@ class MainActivity : Activity() {
         runClockView = null
         messageContainer.removeAllViews()
         emptyView.visibility = if (messages.isEmpty()) View.VISIBLE else View.GONE
-        emptyView.text = if (currentSession?.blank == true) "有什么可以帮忙的？\n\n在远端工作区开始一项任务" else "还没有可显示的消息"
+        emptyView.text = if (currentSession?.blank == true) tr("有什么可以帮忙的？\n\n在远端工作区开始一项任务", "What can I help with?\n\nStart a task in the remote workspace") else tr("还没有可显示的消息", "No messages to show yet")
         messages.forEach { messageContainer.addView(messageBubble(it)) }
         if (currentSession?.running == true) {
             messageContainer.addView(buildTurnStatus(), LinearLayout.LayoutParams(WRAP, dp(42)))
             mainHandler.post(runClockTick)
         }
         lastMessages = messages
-        messageScroll.post { messageScroll.fullScroll(View.FOCUS_DOWN) }
+        restoreMessageScrollAfterLayout(followBottom, previousScrollY)
+        if (messages.any { it.assistantFooter != null }) ensureMessageFeedbackLoaded()
+    }
+
+    private fun shouldFollowMessageBottom(force: Boolean = false): Boolean {
+        val content = messageScroll.getChildAt(0) ?: return true
+        val viewportBottom = messageScroll.scrollY + messageScroll.height - messageScroll.paddingBottom
+        val distanceFromBottom = (content.bottom - viewportBottom).coerceAtLeast(0)
+        return MessageScrollPolicy.shouldFollowBottom(distanceFromBottom, dp(MESSAGE_FOLLOW_THRESHOLD_DP), force)
+    }
+
+    /**
+     * Message rows are rebuilt from fast history snapshots. Waiting until the next pre-draw keeps
+     * fullScroll from using the previous child height and briefly leaving the live status offscreen.
+     */
+    private fun restoreMessageScrollAfterLayout(followBottom: Boolean, previousScrollY: Int) {
+        pendingMessageScrollRestore?.let { previous ->
+            if (messageScroll.viewTreeObserver.isAlive) {
+                messageScroll.viewTreeObserver.removeOnPreDrawListener(previous)
+            }
+        }
+        val listener = object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (messageScroll.viewTreeObserver.isAlive) {
+                    messageScroll.viewTreeObserver.removeOnPreDrawListener(this)
+                }
+                if (pendingMessageScrollRestore === this) pendingMessageScrollRestore = null
+                if (followBottom) {
+                    messageScroll.fullScroll(View.FOCUS_DOWN)
+                } else {
+                    val content = messageScroll.getChildAt(0)
+                    val maxScroll = if (content == null) 0 else {
+                        (content.height - messageScroll.height + messageScroll.paddingTop + messageScroll.paddingBottom)
+                            .coerceAtLeast(0)
+                    }
+                    messageScroll.scrollTo(0, previousScrollY.coerceAtMost(maxScroll))
+                }
+                return true
+            }
+        }
+        pendingMessageScrollRestore = listener
+        messageScroll.viewTreeObserver.addOnPreDrawListener(listener)
+        messageScroll.requestLayout()
     }
 
     private fun buildTurnStatus(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(2), dp(8), 0, dp(8))
-        contentDescription = "模型正在运行"
+        contentDescription = tr("模型正在运行", "Model is running")
         addView(ShimmerTextView(this@MainActivity).apply {
-            text = "Deep diving..."
+            text = tr("深入思考中…", "Deep diving…")
             textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
             includeFontPadding = false
@@ -2051,14 +2376,278 @@ class MainActivity : Activity() {
         val width = if (message.role == ChatMessage.Role.USER) WRAP else MATCH
         outer.addView(bubble, LinearLayout.LayoutParams(width, WRAP))
         if (message.role == ChatMessage.Role.ASSISTANT) {
-            outer.addView(TextView(this).apply {
-                text = if (message.pending) "●  正在生成" else "复制   ·   重新生成"
-                textSize = 10f
-                setTextColor(COLOR_MUTED)
-                setPadding(dp(2), dp(4), 0, 0)
-            })
+            if (message.pending) {
+                outer.addView(TextView(this).apply {
+                    text = tr("●  正在生成", "●  Generating")
+                    textSize = 10f
+                    setTextColor(COLOR_MUTED)
+                    setPadding(dp(2), dp(4), 0, 0)
+                })
+            } else if (message.assistantFooter != null) {
+                outer.addView(buildAssistantActions(message), LinearLayout.LayoutParams(MATCH, dp(32)))
+            }
         }
         return outer
+    }
+
+    private fun buildAssistantActions(message: ChatMessage): View {
+        val footer = requireNotNull(message.assistantFooter)
+        val scroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setPadding(0, dp(4), 0, 0)
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val addIcon = { button: ImageButton, trailing: Int ->
+            row.addView(button, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(trailing) })
+        }
+        val copy = assistantActionButton(R.drawable.ic_copy_outline_16, tr("复制", "Copy")) { view ->
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText(tr("助手回复", "Assistant response"), message.text))
+            (view as ImageButton).apply {
+                setImageResource(R.drawable.ic_check_outline_16)
+                contentDescription = tr("已复制", "Copied")
+                mainHandler.postDelayed({
+                    setImageResource(R.drawable.ic_copy_outline_16)
+                    contentDescription = tr("复制", "Copy")
+                }, 1_000L)
+            }
+        }
+        addIcon(copy, 10)
+
+        val feedback = messageFeedback[footer.messageId]
+        val pending = footer.messageId in feedbackPending
+        addIcon(assistantActionButton(
+            R.drawable.ic_like_outline_16,
+            if (feedback?.rating == "positive") tr("取消标记", "Remove rating") else tr("好的回答", "Good response"),
+            selected = feedback?.rating == "positive",
+            pending = pending,
+        ) { toggleMessageFeedback(footer.messageId, "positive") }, 10)
+        addIcon(assistantActionButton(
+            R.drawable.ic_dislike_outline_16,
+            if (feedback?.rating == "negative") tr("取消标记", "Remove rating") else tr("有问题的回答", "Bad response"),
+            selected = feedback?.rating == "negative",
+            pending = pending,
+        ) { toggleMessageFeedback(footer.messageId, "negative") }, 10)
+
+        if (feedback != null) {
+            row.addView(TextView(this).apply {
+                text = feedback.note ?: tr("补充说明", "Add a note")
+                textSize = 13f
+                setTextColor(COLOR_MUTED)
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                maxLines = 1
+                maxWidth = dp(220)
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(8), 0, dp(8), 0)
+                background = null
+                isClickable = !pending
+                isFocusable = !pending
+                alpha = if (pending) 0.4f else 1f
+                setOnClickListener { showFeedbackNote(footer.messageId) }
+            }, LinearLayout.LayoutParams(WRAP, dp(28)).apply { marginEnd = dp(10) })
+        }
+
+        addIcon(assistantActionButton(
+            R.drawable.ic_branch_outline_16,
+            tr("从这里分支新会话", "Branch into a new conversation"),
+        ) { forkFromAssistant(footer) }, 12)
+        row.addView(TextView(this).apply {
+            text = assistantFooterLabel(message.time, footer)
+            textSize = 14f
+            setTextColor(COLOR_MUTED)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
+            isSingleLine = true
+        }, LinearLayout.LayoutParams(WRAP, dp(28)))
+        scroll.addView(row, ViewGroup.LayoutParams(WRAP, dp(28)))
+        return scroll
+    }
+
+    private fun assistantActionButton(
+        icon: Int,
+        description: String,
+        selected: Boolean = false,
+        pending: Boolean = false,
+        action: (View) -> Unit,
+    ) = ImageButton(this).apply {
+        setImageResource(icon)
+        imageTintList = ColorStateList.valueOf(if (selected) COLOR_TEXT else COLOR_MUTED)
+        scaleType = ImageView.ScaleType.CENTER
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+        background = null
+        contentDescription = description
+        isClickable = !pending
+        isFocusable = !pending
+        isEnabled = !pending
+        alpha = if (pending) 0.4f else 1f
+        setOnClickListener(action)
+    }
+
+    private fun assistantFooterLabel(time: Long, footer: AssistantFooter): String {
+        val parts = mutableListOf(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(time)))
+        footer.runMs?.let { parts += tr("用时 ${formatRunDuration(it)}", "Ran for ${formatRunDuration(it)}") }
+        footer.ttftMs?.let { parts += tr("首 token ${formatLatencySeconds(it)}秒", "TTFT ${formatLatencySeconds(it)}s") }
+        footer.tokensPerSecond?.let { parts += "${formatTokensPerSecond(it)} tok/s" }
+        return parts.joinToString("  ·  ")
+    }
+
+    private fun formatLatencySeconds(ms: Long): String {
+        val seconds = ms.coerceAtLeast(0L) / 1_000.0
+        return if (seconds < 10) (kotlin.math.round(seconds * 10) / 10.0).toString().removeSuffix(".0")
+        else kotlin.math.round(seconds).toLong().toString()
+    }
+
+    private fun formatTokensPerSecond(value: Double): String {
+        val clamped = value.coerceAtLeast(0.0)
+        return if (clamped >= 10) kotlin.math.round(clamped).toLong().toString()
+        else (kotlin.math.round(clamped * 10) / 10.0).toString().removeSuffix(".0")
+    }
+
+    private fun ensureMessageFeedbackLoaded() {
+        val sessionId = currentSession?.id ?: return
+        if (feedbackLoadedSessionId == sessionId || feedbackLoadingSessionId == sessionId) return
+        feedbackLoadingSessionId = sessionId
+        worker.execute {
+            try {
+                val loaded = api.messageFeedback(sessionId)
+                mainHandler.post {
+                    if (currentSession?.id != sessionId) return@post
+                    feedbackLoadingSessionId = null
+                    feedbackLoadedSessionId = sessionId
+                    messageFeedback.clear()
+                    loaded.associateByTo(messageFeedback) { it.messageId }
+                    rerenderMessages()
+                }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    if (currentSession?.id != sessionId) return@post
+                    feedbackLoadingSessionId = null
+                    Log.w("MessageFeedback", "feedback list failed", error)
+                }
+            }
+        }
+    }
+
+    private fun toggleMessageFeedback(messageId: String, rating: String) {
+        val sessionId = currentSession?.id ?: return
+        if (!feedbackPending.add(messageId)) return
+        val loaded = feedbackLoadedSessionId == sessionId
+        val known = messageFeedback.toMap()
+        rerenderMessages()
+        worker.execute {
+            try {
+                val source = if (loaded) known else api.messageFeedback(sessionId).associateBy { it.messageId }
+                val observed = source[messageId]
+                val result = if (observed?.rating == rating) {
+                    api.deleteMessageFeedback(sessionId, observed)
+                } else {
+                    api.putMessageFeedback(sessionId, messageId, rating, observed?.note, observed?.version)
+                }
+                mainHandler.post { applyMessageFeedbackMutation(sessionId, messageId, result, source) }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    feedbackPending.remove(messageId)
+                    rerenderMessages()
+                    Toast.makeText(this, error.message ?: tr("反馈保存失败", "Could not save feedback"), Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun applyMessageFeedbackMutation(
+        sessionId: String,
+        messageId: String,
+        result: HarnessApi.MessageFeedbackMutation,
+        source: Map<String, HarnessApi.MessageFeedback>,
+    ) {
+        if (currentSession?.id != sessionId) return
+        feedbackPending.remove(messageId)
+        feedbackLoadedSessionId = sessionId
+        feedbackLoadingSessionId = null
+        messageFeedback.clear()
+        messageFeedback.putAll(source)
+        when {
+            result.ok && result.item == null -> messageFeedback.remove(messageId)
+            result.ok && result.item != null -> messageFeedback[messageId] = result.item
+            result.conflict -> {
+                if (result.item == null) messageFeedback.remove(messageId) else messageFeedback[messageId] = result.item
+                Toast.makeText(this, tr("这条反馈已在别处改动，已显示最新状态", "This feedback changed elsewhere; the latest state is shown"), Toast.LENGTH_LONG).show()
+            }
+            else -> Toast.makeText(this, tr("反馈保存失败", "Could not save feedback"), Toast.LENGTH_LONG).show()
+        }
+        rerenderMessages()
+    }
+
+    private fun showFeedbackNote(messageId: String) {
+        val item = messageFeedback[messageId] ?: return
+        val input = EditText(this).apply {
+            setText(item.note.orEmpty())
+            setSelection(text.length)
+            hint = tr("这条回答哪里好，或哪里有问题？（可选）", "What was good, or what went wrong? (optional)")
+            minLines = 2
+            maxLines = 5
+        }
+        AlertDialog.Builder(this)
+            .setTitle(tr("反馈说明", "Feedback note"))
+            .setView(input)
+            .setPositiveButton(tr("保存", "Save")) { _, _ -> saveFeedbackNote(item, input.text.toString().trim()) }
+            .setNegativeButton(tr("取消", "Cancel"), null)
+            .show()
+    }
+
+    private fun saveFeedbackNote(item: HarnessApi.MessageFeedback, note: String) {
+        val sessionId = currentSession?.id ?: return
+        if (!feedbackPending.add(item.messageId)) return
+        val source = messageFeedback.toMap()
+        rerenderMessages()
+        worker.execute {
+            try {
+                val result = api.putMessageFeedback(sessionId, item.messageId, item.rating, note.ifBlank { null }, item.version)
+                mainHandler.post { applyMessageFeedbackMutation(sessionId, item.messageId, result, source) }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    feedbackPending.remove(item.messageId)
+                    rerenderMessages()
+                    Toast.makeText(this, error.message ?: tr("反馈保存失败", "Could not save feedback"), Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun forkFromAssistant(footer: AssistantFooter) {
+        val session = currentSession ?: return
+        progress.visibility = View.VISIBLE
+        worker.execute {
+            try {
+                val id = api.forkSession(session.id, footer.atSeq)
+                mainHandler.post {
+                    progress.visibility = View.GONE
+                    feedbackLoadedSessionId = null
+                    feedbackLoadingSessionId = null
+                    messageFeedback.clear()
+                    feedbackPending.clear()
+                    currentSession = HarnessApi.Session(id, session.title, session.cwd, session.agentPreset, System.currentTimeMillis(), false, false)
+                    closeDrawer()
+                    refresh(true)
+                }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    progress.visibility = View.GONE
+                    Toast.makeText(this, error.message ?: tr("无法创建分支会话", "Could not branch conversation"), Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun rerenderMessages() {
+        lastRenderedSignature = ""
+        renderMessages(lastMessages)
     }
 
     private fun activityDisclosure(message: ChatMessage): View {
@@ -2091,7 +2680,7 @@ class MainActivity : Activity() {
             isClickable = false
         }, LinearLayout.LayoutParams(dp(28), dp(28)))
         header.addView(TextView(this).apply {
-            text = message.title ?: if (message.role == ChatMessage.Role.REASONING) "Think" else "Tool call"
+            text = message.title ?: if (message.role == ChatMessage.Role.REASONING) tr("思考", "Think") else tr("工具调用", "Tool call")
             textSize = 14f
             setTextColor(COLOR_ACTIVITY)
             includeFontPadding = false
@@ -2132,10 +2721,11 @@ class MainActivity : Activity() {
         if (expandable) {
             header.isClickable = true
             header.isFocusable = true
-            header.contentDescription = "${message.title ?: "Think"}，点击展开"
+            val accessibilityTitle = message.title ?: tr("思考", "Think")
+            header.contentDescription = tr("$accessibilityTitle，点击展开", "$accessibilityTitle, tap to expand")
             header.setOnClickListener {
                 details.visibility = if (details.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                header.contentDescription = "${message.title ?: "Think"}，${if (details.visibility == View.VISIBLE) "点击收起" else "点击展开"}"
+                header.contentDescription = if (details.visibility == View.VISIBLE) tr("$accessibilityTitle，点击收起", "$accessibilityTitle, tap to collapse") else tr("$accessibilityTitle，点击展开", "$accessibilityTitle, tap to expand")
             }
         }
         outer.addView(header, LinearLayout.LayoutParams(MATCH, dp(34)))
@@ -2170,8 +2760,10 @@ class MainActivity : Activity() {
                 val next = shown.length + Character.charCount(Character.codePointAt(target, shown.length))
                 shown = target.substring(0, next)
                 streamingRendered[message.key] = shown
+                val followBottom = shouldFollowMessageBottom()
+                val previousScrollY = messageScroll.scrollY
                 view.text = styledStreamingMessage(shown)
-                messageScroll.post { messageScroll.fullScroll(View.FOCUS_DOWN) }
+                if (followBottom) restoreMessageScrollAfterLayout(true, previousScrollY)
                 mainHandler.postDelayed(this, if (shown.length < target.length) STREAM_CHARACTER_MS else STREAM_FADE_MS)
             }
         }
@@ -2246,9 +2838,332 @@ class MainActivity : Activity() {
         return text
     }
 
+    private fun maybeHandleCredentialFailure(messages: List<ChatMessage>) {
+        val failure = messages.lastOrNull { message ->
+            message.state == ChatMessage.State.ERROR &&
+                message.detail.orEmpty().contains("MISSING_CREDENTIAL", ignoreCase = true)
+        } ?: return
+        if (failure.key == lastCredentialFailureKey) return
+        lastCredentialFailureKey = failure.key
+        maybeCheckProviderOnboarding(force = true, showUnavailable = true)
+    }
+
+    private fun maybeCheckProviderOnboarding(
+        force: Boolean = false,
+        showUnavailable: Boolean = false,
+        onReady: (() -> Unit)? = null,
+    ) {
+        if (onReady != null) pendingProviderReadyAction = onReady
+        if (force) {
+            providerOnboardingChecked = false
+            providerOnboardingDismissed = false
+        }
+        providerUnavailableShouldExplain = providerUnavailableShouldExplain || showUnavailable || force
+        if (providerOnboardingCheckRunning || providerOnboardingDismissed) return
+        if (providerOnboardingChecked) {
+            completeProviderReadyAction()
+            return
+        }
+        providerOnboardingCheckRunning = true
+        worker.execute {
+            try {
+                val onboarding = api.providerOnboarding()
+                mainHandler.post {
+                    providerOnboardingCheckRunning = false
+                    when (onboarding) {
+                        ProviderOnboarding.Ready -> {
+                            providerOnboardingChecked = true
+                            providerUnavailableShouldExplain = false
+                            completeProviderReadyAction()
+                        }
+                        is ProviderOnboarding.MissingCredential -> {
+                            providerOnboardingChecked = false
+                            showApiKeyOnboarding(onboarding)
+                        }
+                        is ProviderOnboarding.Unavailable -> {
+                            providerOnboardingChecked = true
+                            if (providerUnavailableShouldExplain) {
+                                providerUnavailableShouldExplain = false
+                                showProviderSetupUnavailable(onboarding.reason)
+                            } else {
+                                completeProviderReadyAction()
+                            }
+                        }
+                    }
+                }
+            } catch (_: HarnessApi.AuthenticationRequired) {
+                mainHandler.post {
+                    providerOnboardingCheckRunning = false
+                    providerUnavailableShouldExplain = false
+                    showAuth()
+                }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    providerOnboardingCheckRunning = false
+                    providerOnboardingChecked = true
+                    if (providerUnavailableShouldExplain) {
+                        providerUnavailableShouldExplain = false
+                        showProviderSetupUnavailable(error.message ?: tr("当前连接无法读取模型设置", "This connection cannot read model settings"))
+                    } else {
+                        completeProviderReadyAction()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun completeProviderReadyAction() {
+        val action = pendingProviderReadyAction ?: return
+        pendingProviderReadyAction = null
+        action()
+    }
+
+    private fun showApiKeyOnboarding(
+        onboarding: ProviderOnboarding.MissingCredential,
+        autoFocus: Boolean = true,
+    ) {
+        if (providerOnboardingDialog?.isShowing == true || isFinishing) return
+        val dialog = Dialog(this)
+        providerOnboardingDialog = dialog
+        val panel = onboardingPanel()
+        panel.addView(onboardingTitle(tr("添加一个 API Key 开始使用", "Add an API key to get started")))
+        panel.addView(onboardingBody(tr("配置 ${onboarding.providerName} 官方模型，即可开始使用。", "Configure the official ${onboarding.providerName} model to get started.")))
+        panel.addView(TextView(this).apply {
+            text = "API Key"
+            textSize = 12f
+            typeface = onboardingMediumTypeface()
+            setTextColor(COLOR_ONBOARDING_SECONDARY)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(MATCH, dp(18)).apply { topMargin = dp(20) })
+        val input = EditText(this).apply {
+            hint = tr("输入 API Key", "Enter API key")
+            textSize = 14f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            setTextColor(COLOR_ONBOARDING_PRIMARY)
+            setHintTextColor(COLOR_ONBOARDING_DIMMED)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            isSingleLine = true
+            includeFontPadding = false
+            setPadding(dp(10), 0, dp(10), 0)
+            background = onboardingInputBackground(focused = false)
+            setOnFocusChangeListener { _, focused -> background = onboardingInputBackground(focused) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            }
+        }
+        panel.addView(input, LinearLayout.LayoutParams(MATCH, dp(32)).apply { topMargin = dp(6) })
+        val errorView = TextView(this).apply {
+            textSize = 12f
+            setTextColor(COLOR_ONBOARDING_ERROR)
+            visibility = View.GONE
+        }
+        panel.addView(errorView, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+        val later = onboardingAction(tr("稍后配置", "Set up later"), primary = false)
+        val save = onboardingAction(tr("保存并继续", "Save and continue"), primary = true)
+        fun renderSaveState() {
+            val valid = ApiKeyInput.normalize(input.text?.toString().orEmpty()) != null
+            save.isEnabled = valid
+            save.alpha = if (valid) 1f else 0.4f
+        }
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val raw = s?.toString().orEmpty()
+                if (raw.isNotBlank() && ApiKeyInput.normalize(raw) == null) {
+                    errorView.text = tr("请输入 API Key 本身，不要粘贴 NAME=value、空格或带引号的内容。", "Enter only the API key, without NAME=value, spaces, or quotes.")
+                    errorView.visibility = View.VISIBLE
+                } else {
+                    errorView.visibility = View.GONE
+                }
+                renderSaveState()
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+        later.setOnClickListener {
+            input.text?.clear()
+            providerOnboardingDismissed = true
+            pendingProviderReadyAction = null
+            dialog.dismiss()
+        }
+        save.setOnClickListener {
+            val key = ApiKeyInput.normalize(input.text?.toString().orEmpty())
+            if (key == null) {
+                errorView.text = tr("请输入 API Key 本身，不要粘贴 NAME=value 或带引号的内容。", "Enter only the API key, without NAME=value or quotes.")
+                errorView.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
+            input.isEnabled = false
+            later.isEnabled = false
+            save.isEnabled = false
+            save.text = tr("正在保存…", "Saving…")
+            worker.execute {
+                try {
+                    api.setCredential(onboarding.ref, key)
+                    mainHandler.post {
+                        input.text?.clear()
+                        providerOnboardingChecked = false
+                        providerOnboardingDismissed = false
+                        dialog.dismiss()
+                        val hadPendingAction = pendingProviderReadyAction != null
+                        completeProviderReadyAction()
+                        if (!hadPendingAction) refresh(showSpinner = true)
+                    }
+                } catch (_: HarnessApi.AuthenticationRequired) {
+                    mainHandler.post {
+                        input.text?.clear()
+                        dialog.dismiss()
+                        showAuth()
+                    }
+                } catch (error: Exception) {
+                    mainHandler.post {
+                        input.isEnabled = true
+                        later.isEnabled = true
+                        save.text = tr("保存并继续", "Save and continue")
+                        renderSaveState()
+                        errorView.text = error.message ?: tr("API Key 保存失败", "Failed to save API key")
+                        errorView.visibility = View.VISIBLE
+                    }
+                }
+            }
+        }
+        renderSaveState()
+        actions.addView(later, LinearLayout.LayoutParams(WRAP, dp(36)).apply { marginEnd = dp(8) })
+        actions.addView(save, LinearLayout.LayoutParams(WRAP, dp(36)))
+        panel.addView(actions, LinearLayout.LayoutParams(MATCH, dp(36)).apply { topMargin = dp(12) })
+        showOnboardingDialog(dialog, panel)
+        if (autoFocus) input.post { input.requestFocus() }
+    }
+
+    private fun showProviderSetupUnavailable(reason: String) {
+        if (providerOnboardingDialog?.isShowing == true || isFinishing) return
+        val dialog = Dialog(this)
+        providerOnboardingDialog = dialog
+        val panel = onboardingPanel()
+        panel.addView(onboardingTitle(tr("需要配置模型凭据", "Model credentials required")))
+        val localizedReason = localizeProviderReason(reason)
+        panel.addView(onboardingBody(
+            tr("$localizedReason。当前 Android 连接无法直接完成配置，请在运行 Harness 的主机上打开 Web 设置 → 模型，配置 API Key 后再回来刷新。", "$localizedReason. This Android connection cannot complete setup directly. Open Web Settings → Models on the Harness host, configure the API key, then return and refresh."),
+        ))
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+        val later = onboardingAction(tr("稍后配置", "Set up later"), primary = false).apply {
+            setOnClickListener {
+                providerOnboardingDismissed = true
+                pendingProviderReadyAction = null
+                dialog.dismiss()
+            }
+        }
+        val continueAction = pendingProviderReadyAction
+        val retry = onboardingAction(if (continueAction == null) tr("刷新", "Refresh") else tr("继续", "Continue"), primary = true).apply {
+            setOnClickListener {
+                dialog.dismiss()
+                if (continueAction == null) {
+                    providerOnboardingChecked = false
+                    refresh(showSpinner = true)
+                } else {
+                    completeProviderReadyAction()
+                }
+            }
+        }
+        actions.addView(later, LinearLayout.LayoutParams(WRAP, dp(36)).apply { marginEnd = dp(8) })
+        actions.addView(retry, LinearLayout.LayoutParams(WRAP, dp(36)))
+        panel.addView(actions, LinearLayout.LayoutParams(MATCH, dp(36)).apply { topMargin = dp(20) })
+        showOnboardingDialog(dialog, panel)
+    }
+
+    private fun localizeProviderReason(reason: String): String = when (reason) {
+        "DeepSeek 官方模型未安装" -> tr(reason, "The official DeepSeek model is not installed")
+        "DeepSeek 官方模型当前不可用" -> tr(reason, "The official DeepSeek model is currently unavailable")
+        "DeepSeek 官方模型未公开凭据配置" -> tr(reason, "The official DeepSeek model does not expose credential settings")
+        "无法读取 API Key 配置状态" -> tr(reason, "Unable to read API key configuration status")
+        "Harness 设置为只读" -> tr(reason, "Harness settings are read-only")
+        "API Key 由启动环境提供，无法在客户端修改" -> tr(reason, "The API key is provided by the launch environment and cannot be changed in the client")
+        else -> reason
+    }
+
+    private fun onboardingPanel() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(24), dp(24), dp(24), dp(24))
+        background = roundedStroke(COLOR_ONBOARDING_CARD, COLOR_ONBOARDING_BORDER, 24f)
+        elevation = dp(24).toFloat()
+    }
+
+    private fun onboardingTitle(label: String) = TextView(this).apply {
+        text = label
+        setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20f)
+        typeface = onboardingMediumTypeface()
+        setTextColor(COLOR_ONBOARDING_PRIMARY)
+        includeFontPadding = false
+        gravity = Gravity.CENTER_VERTICAL
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(28))
+    }
+
+    private fun onboardingBody(label: String) = TextView(this).apply {
+        text = label
+        setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14f)
+        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        setTextColor(COLOR_ONBOARDING_SECONDARY)
+        setLineSpacing(dp(2).toFloat(), 1f)
+        includeFontPadding = false
+        gravity = Gravity.CENTER_VERTICAL
+        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(20) }
+    }
+
+    private fun onboardingAction(label: String, primary: Boolean) = TextView(this).apply {
+        text = label
+        textSize = 14f
+        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setPadding(dp(14), 0, dp(14), 0)
+        setTextColor(if (primary) COLOR_ONBOARDING_PRIMARY_FOREGROUND else COLOR_ONBOARDING_PRIMARY)
+        background = if (primary) {
+            rounded(COLOR_ONBOARDING_PRIMARY, 18f)
+        } else {
+            roundedStroke(Color.TRANSPARENT, COLOR_ONBOARDING_BORDER_L2, 18f)
+        }
+        isClickable = true
+        isFocusable = true
+    }
+
+    private fun onboardingInputBackground(focused: Boolean) = roundedStroke(
+        COLOR_ONBOARDING_INPUT,
+        if (focused) COLOR_ONBOARDING_PRIMARY else COLOR_ONBOARDING_BORDER_L2,
+        8f,
+    )
+
+    private fun onboardingMediumTypeface(): Typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        Typeface.create(Typeface.SANS_SERIF, 500, false)
+    } else {
+        Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+    }
+
+    private fun showOnboardingDialog(dialog: Dialog, panel: View) {
+        dialog.setContentView(panel)
+        dialog.setCancelable(false)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.setOnDismissListener {
+            if (providerOnboardingDialog === dialog) providerOnboardingDialog = null
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply { dimAmount = 0.5f }
+            setLayout(minOf(resources.displayMetrics.widthPixels - dp(48), dp(600)), WRAP)
+        }
+    }
+
     private fun sendPrompt() {
         val session = currentSession ?: run {
-            Toast.makeText(this, "请先新建或选择会话", Toast.LENGTH_SHORT).show()
+            maybeCheckProviderOnboarding(force = true) { showNewSession() }
             return
         }
         val text = composer.text.toString().trim()
@@ -2259,6 +3174,7 @@ class MainActivity : Activity() {
             .filter { it.role == ChatMessage.Role.ASSISTANT }
             .mapTo(mutableSetOf()) { it.key }
         animateNextAssistant = true
+        forceMessageScrollToBottom = true
         setComposerEnabled(false)
         hideKeyboard()
         worker.execute {
@@ -2272,7 +3188,7 @@ class MainActivity : Activity() {
                     if (!paused && startedSession != null) {
                         serverUrl?.let { TaskMonitorService.watch(this, it, listOf(startedSession), runningStartedAt!!) }
                     }
-                    updateStatus("运行中", STATUS_CONNECTED)
+                    updateStatus(tr("运行中", "Running"), STATUS_CONNECTED)
                     refresh(showSpinner = false)
                 }
             } catch (_: HarnessApi.AuthenticationRequired) {
@@ -2286,7 +3202,7 @@ class MainActivity : Activity() {
                     animateNextAssistant = false
                     setComposerEnabled(true)
                     composer.setText(text)
-                    Toast.makeText(this, error.message ?: "发送失败", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, error.message ?: tr("发送失败", "Failed to send"), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -2301,7 +3217,7 @@ class MainActivity : Activity() {
         if (!::sendButton.isInitialized || !::composer.isInitialized) return
         val running = currentSession?.running == true
         val hasDraft = composer.text?.isNotBlank() == true
-        val enabled = running || (composer.isEnabled && currentSession != null && hasDraft)
+        val enabled = running || (composer.isEnabled && hasDraft)
         sendButton.isEnabled = enabled
         sendButton.alpha = 1f
         sendButton.imageTintList = ColorStateList.valueOf(if (enabled) Color.WHITE else COLOR_SEND_DISABLED_ICON)
@@ -2351,7 +3267,7 @@ class MainActivity : Activity() {
         }
         if (visibleSessions.isEmpty()) {
             sessionList.addView(TextView(this).apply {
-                text = if (query.isBlank()) "No sessions yet" else "No matching sessions"
+                text = if (query.isBlank()) tr("还没有会话", "No sessions yet") else tr("没有匹配的会话", "No matching sessions")
                 textSize = 13f
                 setTextColor(COLOR_MUTED)
                 setPadding(dp(38), dp(14), dp(8), dp(14))
@@ -2395,7 +3311,7 @@ class MainActivity : Activity() {
                 val key = "path:$path"
                 val expanded = query.isNotBlank() || active || key in manuallyExpandedWorkspaceKeys
                 sessionList.addView(workspaceHeader(
-                    path.trimEnd('/').substringAfterLast('/').ifBlank { "Workspace" },
+                    path.trimEnd('/').substringAfterLast('/').ifBlank { tr("工作区", "Workspace") },
                     active,
                     expanded,
                 ) {
@@ -2422,7 +3338,7 @@ class MainActivity : Activity() {
         }
         setOnLongClickListener { showSessionActions(session); true }
         addView(TextView(this@MainActivity).apply {
-            text = session.title ?: session.cwd?.substringAfterLast('/') ?: "Untitled"
+            text = session.title ?: session.cwd?.substringAfterLast('/') ?: tr("未命名", "Untitled")
             textSize = 14f
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             setTextColor(COLOR_DRAWER_PRIMARY)
@@ -2454,11 +3370,11 @@ class MainActivity : Activity() {
 
     private fun showSessionActions(session: HarnessApi.Session) {
         AlertDialog.Builder(this)
-            .setTitle(session.title ?: "会话操作")
-            .setItems(arrayOf("重命名", "Fork 会话")) { _, which ->
+            .setTitle(session.title ?: tr("会话操作", "Session actions"))
+            .setItems(arrayOf(tr("重命名", "Rename"), tr("Fork 会话", "Fork session"))) { _, which ->
                 if (which == 0) showRenameSession(session) else confirmForkSession(session)
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(tr("取消", "Cancel"), null)
             .show()
     }
 
@@ -2469,21 +3385,21 @@ class MainActivity : Activity() {
             setSingleLine(true)
         }
         AlertDialog.Builder(this)
-            .setTitle("重命名会话")
+            .setTitle(tr("重命名会话", "Rename session"))
             .setView(input)
-            .setPositiveButton("保存") { _, _ ->
+            .setPositiveButton(tr("保存", "Save")) { _, _ ->
                 val title = input.text.toString().trim()
                 if (title.isNotEmpty()) mutateSession { api.renameSession(session.id, title) }
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(tr("取消", "Cancel"), null)
             .show()
     }
 
     private fun confirmForkSession(session: HarnessApi.Session) {
         AlertDialog.Builder(this)
-            .setTitle("Fork 会话")
-            .setMessage("从最后一个完整回合创建一个新会话？")
-            .setPositiveButton("创建") { _, _ ->
+            .setTitle(tr("Fork 会话", "Fork session"))
+            .setMessage(tr("从最后一个完整回合创建一个新会话？", "Create a new session from the last complete turn?"))
+            .setPositiveButton(tr("创建", "Create")) { _, _ ->
                 progress.visibility = View.VISIBLE
                 worker.execute {
                     try {
@@ -2499,7 +3415,7 @@ class MainActivity : Activity() {
                     }
                 }
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(tr("取消", "Cancel"), null)
             .show()
     }
 
@@ -2543,16 +3459,22 @@ class MainActivity : Activity() {
     }
 
     private fun showModels() {
-        val session = currentSession ?: return
-        val models = currentModels ?: run { refresh(true); return }
+        val session = currentSession ?: run {
+            maybeCheckProviderOnboarding(force = true) { showNewSession() }
+            return
+        }
+        val models = currentModels ?: run {
+            maybeCheckProviderOnboarding(force = true) { refresh(true) }
+            return
+        }
         if (!models.routable) {
-            Toast.makeText(this, "当前模型路由不可用", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, tr("当前模型路由不可用", "The current model route is unavailable"), Toast.LENGTH_LONG).show()
             return
         }
         val current = models.items.firstOrNull { it.provider == models.currentProvider && it.id == models.currentModel }
         val root = menuSurface()
         val popup = popupFor(modelButton, root, 250)
-        root.addView(drillMenuRow("Model", current?.name ?: models.currentModel) {
+        root.addView(drillMenuRow(tr("模型", "Model"), current?.name ?: models.currentModel) {
             popup.dismiss()
             modelButton.post { showModelPicker(session, models) }
         })
@@ -2560,7 +3482,7 @@ class MainActivity : Activity() {
             val effort = models.currentEffort?.let { id -> current.efforts.firstOrNull { it.first == id }?.second ?: id }
                 ?: current.defaultEffort?.let { id -> current.efforts.firstOrNull { it.first == id }?.second ?: id }
                 ?: "Off"
-            root.addView(drillMenuRow("Effort", effort) {
+            root.addView(drillMenuRow(tr("推理强度", "Effort"), effort) {
                 popup.dismiss()
                 modelButton.post { showEffortPicker() }
             })
@@ -2569,16 +3491,17 @@ class MainActivity : Activity() {
     }
 
     private fun showCommands(anchor: View) {
+        if (commandPopup?.isShowing == true) return
         val commands = listOf(
-            "compact" to "Compact older conversation history",
-            "export" to "Download this Session log as a ZIP archive",
-            "feedback" to "record feedback about this session",
-            "goal" to "set or view the goal for a long-running task",
-            "permission" to "Switch the permission preset (sandbox mode + approval policy)",
-            "plan" to "Enter or leave plan mode",
+            "compact" to tr("压缩较早的对话历史", "Compact older conversation history"),
+            "export" to tr("将此会话日志下载为 ZIP", "Download this session log as a ZIP archive"),
+            "feedback" to tr("记录对此会话的反馈", "Record feedback about this session"),
+            "goal" to tr("设置或查看长任务目标", "Set or view the goal for a long-running task"),
+            "permission" to tr("切换权限预设（沙盒与审批策略）", "Switch the permission preset (sandbox mode + approval policy)"),
+            "plan" to tr("进入或退出计划模式", "Enter or leave plan mode"),
         )
         val surface = menuSurface()
-        surface.addView(menuSection("Commands"))
+        surface.addView(menuSection(tr("命令", "Commands")))
         var popup: PopupWindow? = null
         commands.forEach { (name, description) ->
             surface.addView(commandMenuRow(name, description) {
@@ -2595,7 +3518,18 @@ class MainActivity : Activity() {
             isVerticalScrollBarEnabled = false
             addView(surface, ViewGroup.LayoutParams(MATCH, WRAP))
         }
-        popup = popupFor(anchor, scroll, 300).apply { height = dp(418) }
+        popup = popupFor(anchor, scroll, 300).apply {
+            setOnDismissListener {
+                commandPopup = null
+                anchor.contentDescription = tr("命令", "Commands")
+                anchor.animate().cancel()
+                anchor.animate().rotation(0f).setDuration(COMMAND_BUTTON_ROTATION_MS).start()
+            }
+        }
+        commandPopup = popup
+        anchor.contentDescription = tr("收起命令菜单", "Close commands menu")
+        anchor.animate().cancel()
+        anchor.animate().rotation(-45f).setDuration(COMMAND_BUTTON_ROTATION_MS).start()
         showPopupAbove(anchor, popup, scroll)
     }
 
@@ -2658,9 +3592,9 @@ class MainActivity : Activity() {
                     }
                     getSystemService(DownloadManager::class.java).enqueue(request)
                     AlertDialog.Builder(this)
-                        .setTitle("Session download started")
-                        .setMessage("The Session ZIP is downloading to Downloads.")
-                        .setPositiveButton("Close", null)
+                        .setTitle(tr("会话下载已开始", "Session download started"))
+                        .setMessage(tr("会话 ZIP 正在下载到“下载”目录。", "The session ZIP is downloading to Downloads."))
+                        .setPositiveButton(tr("关闭", "Close"), null)
                         .show()
                 }
             } catch (_: HarnessApi.AuthenticationRequired) {
@@ -2668,7 +3602,7 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 mainHandler.post {
                     progress.visibility = View.GONE
-                    Toast.makeText(this, error.message ?: "Unable to export Session log", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, error.message ?: tr("无法导出会话日志", "Unable to export session log"), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -2677,6 +3611,35 @@ class MainActivity : Activity() {
     private fun showModelPicker(session: HarnessApi.Session, models: HarnessApi.Models) {
         val surface = menuSurface()
         var popup: PopupWindow? = null
+        models.failures.forEach { failure ->
+            surface.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                background = rounded(Color.argb(24, Color.red(COLOR_RED), Color.green(COLOR_RED), Color.blue(COLOR_RED)), 10f)
+                addView(TextView(this@MainActivity).apply {
+                    text = tr("${failure.name} 加载失败", "Failed to load ${failure.name}")
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_RED)
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = tr("${failure.message}\n点按重试", "${failure.message}\nTap to retry")
+                    textSize = 11f
+                    setTextColor(COLOR_CONTROL_TEXT)
+                }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) })
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    popup?.dismiss()
+                    currentModels = null
+                    refresh(showSpinner = true)
+                }
+            }, LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                leftMargin = dp(6)
+                rightMargin = dp(6)
+                bottomMargin = dp(6)
+            })
+        }
         models.items.groupBy { it.providerName }.forEach { (provider, group) ->
             surface.addView(menuSection(provider))
             group.forEach { model ->
@@ -2712,7 +3675,7 @@ class MainActivity : Activity() {
         val session = currentSession ?: return
         val options = currentControls.permissionOptions
         if (options.isEmpty()) {
-            Toast.makeText(this, "此 Harness 未公开权限预设", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tr("此 Harness 未公开权限预设", "This Harness does not expose permission presets"), Toast.LENGTH_SHORT).show()
             return
         }
         val ordered = listOf("read-only", "workspace-write", "danger-full-access")
@@ -2734,11 +3697,11 @@ class MainActivity : Activity() {
     }
 
     private fun permissionLabel(value: String?): String = when (value) {
-        "workspace-write" -> "Workspace Write"
-        "danger-full-access" -> "Full access"
-        "read-only" -> "Read Only"
-        "custom" -> "Custom"
-        else -> value ?: "未知"
+        "workspace-write" -> tr("工作区写入", "Workspace Write")
+        "danger-full-access" -> tr("完整访问", "Full access")
+        "read-only" -> tr("只读", "Read Only")
+        "custom" -> tr("自定义", "Custom")
+        else -> value ?: tr("未知", "Unknown")
     }
 
     private fun permissionIcon(value: String?): Int = when (value) {
@@ -2881,7 +3844,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@MainActivity).apply {
-                text = "Enable Full access?"
+                text = tr("启用完整访问权限？", "Enable Full access?")
                 setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14f)
                 setTextColor(COLOR_TEXT)
                 typeface = dialogRegular
@@ -2893,7 +3856,7 @@ class MainActivity : Activity() {
                 imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
                 setPadding(dp(14), dp(14), dp(14), dp(14))
                 background = null
-                contentDescription = "Close"
+                contentDescription = tr("关闭", "Close")
                 setOnClickListener { dialog.dismiss() }
             }, LinearLayout.LayoutParams(dp(40), dp(40)))
         }, LinearLayout.LayoutParams(MATCH, dp(40)))
@@ -2904,10 +3867,10 @@ class MainActivity : Activity() {
             setPadding(0, dp(16), 0, 0)
             addView(ImageView(this@MainActivity).apply {
                 setImageResource(R.drawable.web_full_access_warning)
-                contentDescription = "Warning"
+                contentDescription = tr("警告", "Warning")
             }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(12) })
             addView(TextView(this@MainActivity).apply {
-                text = "Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task."
+                text = tr("完整访问会减少确认步骤，并允许智能体直接执行更多操作，包括敏感操作、文件修改或外部命令。仅在你信任当前任务时使用。", "Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.")
                 setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12f)
                 typeface = dialogRegular
                 setLineSpacing(dp(2).toFloat(), 1f)
@@ -2917,7 +3880,7 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(MATCH, WRAP))
 
         val acknowledgement = CheckBox(this).apply {
-            text = "I understand the risks and want to continue"
+            text = tr("我了解风险并希望继续", "I understand the risks and want to continue")
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12f)
             typeface = dialogRegular
             setTextColor(COLOR_TEXT)
@@ -2937,7 +3900,7 @@ class MainActivity : Activity() {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
         val cancel = TextView(this).apply {
-            text = "Cancel"
+            text = tr("取消", "Cancel")
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f)
             typeface = dialogRegular
             setTextColor(COLOR_TEXT)
@@ -2948,7 +3911,7 @@ class MainActivity : Activity() {
             setOnClickListener { dialog.dismiss() }
         }
         val enable = TextView(this).apply {
-            text = "Enable Full access"
+            text = tr("启用完整访问", "Enable Full access")
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f)
             typeface = dialogRegular
             gravity = Gravity.CENTER
@@ -2997,7 +3960,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@MainActivity).apply {
-                text = "${context.percent}% of context used"
+                text = tr("已使用 ${context.percent}% 上下文", "${context.percent}% of context used")
                 textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(COLOR_TEXT)
@@ -3018,9 +3981,9 @@ class MainActivity : Activity() {
             progressBackgroundTintList = ColorStateList.valueOf(COLOR_CONTROL)
         }, LinearLayout.LayoutParams(MATCH, dp(10)).apply { topMargin = dp(6); bottomMargin = dp(8) })
         listOf(
-            "System prompt" to context.systemTokens,
-            "Tools" to context.toolsTokens,
-            "Messages" to context.messageTokens,
+            tr("系统提示词", "System prompt") to context.systemTokens,
+            tr("工具", "Tools") to context.toolsTokens,
+            tr("消息", "Messages") to context.messageTokens,
         ).filter { it.second != null }.forEach { (label, tokens) ->
             surface.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -3070,35 +4033,35 @@ class MainActivity : Activity() {
 
     private fun showSessionSearch() {
         val input = EditText(this).apply {
-            hint = "标题或目录"
+            hint = tr("标题或目录", "Title or directory")
             setSingleLine(true)
             setTextColor(COLOR_TEXT)
             setHintTextColor(COLOR_MUTED)
             setPadding(dp(18), dp(12), dp(18), dp(12))
         }
         AlertDialog.Builder(this)
-            .setTitle("搜索会话")
+            .setTitle(tr("搜索会话", "Search sessions"))
             .setView(input)
-            .setPositiveButton("搜索") { _, _ ->
+            .setPositiveButton(tr("搜索", "Search")) { _, _ ->
                 val query = input.text.toString().trim()
                 val matches = sessions.filter {
                     query.isBlank() || it.title.orEmpty().contains(query, true) || it.cwd.orEmpty().contains(query, true)
                 }
-                if (matches.isEmpty()) Toast.makeText(this, "没有匹配会话", Toast.LENGTH_SHORT).show()
+                if (matches.isEmpty()) Toast.makeText(this, tr("没有匹配会话", "No matching sessions"), Toast.LENGTH_SHORT).show()
                 else showSessionMatches(matches)
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(tr("取消", "Cancel"), null)
             .show()
     }
 
     private fun showSessionMatches(matches: List<HarnessApi.Session>) {
         AlertDialog.Builder(this)
-            .setTitle("搜索结果")
-            .setItems(matches.map { it.title ?: it.cwd?.substringAfterLast('/') ?: "未命名会话" }.toTypedArray()) { _, which ->
+            .setTitle(tr("搜索结果", "Search results"))
+            .setItems(matches.map { it.title ?: it.cwd?.substringAfterLast('/') ?: tr("未命名会话", "Untitled session") }.toTypedArray()) { _, which ->
                 closeDrawer()
                 selectSession(matches[which])
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(tr("取消", "Cancel"), null)
             .show()
     }
 
@@ -3108,19 +4071,19 @@ class MainActivity : Activity() {
                 val workspaces = api.workspaces()
                 mainHandler.post {
                     val savedId = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_DEFAULT_WORKSPACE_ID, null)
-                    val labels = arrayOf("Harness 默认工作目录", *workspaces.map {
+                    val labels = arrayOf(tr("Harness 默认工作目录", "Harness default working directory"), *workspaces.map {
                         "${if (it.id == savedId) "● " else ""}${it.title}\n${it.path}"
                     }.toTypedArray())
                     AlertDialog.Builder(this)
-                        .setTitle("工作区与新会话默认目录")
+                        .setTitle(tr("工作区与新会话默认目录", "Workspace and new-session default directory"))
                         .setItems(labels) { _, which ->
                             val id = if (which == 0) null else workspaces[which - 1].id
                             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().apply {
                                 if (id == null) remove(PREF_DEFAULT_WORKSPACE_ID) else putString(PREF_DEFAULT_WORKSPACE_ID, id)
                             }.apply()
-                            Toast.makeText(this, "已更新默认目录；新建时仍可手动选择", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, tr("已更新默认目录；新建时仍可手动选择", "Default directory updated; you can still choose manually when creating a session"), Toast.LENGTH_SHORT).show()
                         }
-                        .setNegativeButton("关闭", null)
+                        .setNegativeButton(tr("关闭", "Close"), null)
                         .show()
                 }
             } catch (error: Exception) {
@@ -3136,26 +4099,26 @@ class MainActivity : Activity() {
                 val presets = api.agentPresets()
                 mainHandler.post {
                     if (presets.isEmpty()) {
-                        Toast.makeText(this, "此 Harness 未配置 Agent preset", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, tr("此 Harness 未配置 Agent preset", "This Harness has no agent presets configured"), Toast.LENGTH_SHORT).show()
                         return@post
                     }
                     val labels = presets.map {
                         val selected = it.id == session?.agentPreset || session?.agentPreset == null && it.isDefault
-                        val trust = if (it.trust == "system") "系统" else "用户"
-                        "${if (selected) "● " else ""}${it.name}  ·  $trust${it.description?.let { d -> "\n$d" }.orEmpty()}${it.broken?.let { b -> "\n不可用：$b" }.orEmpty()}"
+                        val trust = if (it.trust == "system") tr("系统", "System") else tr("用户", "User")
+                        "${if (selected) "● " else ""}${it.name}  ·  $trust${it.description?.let { d -> "\n$d" }.orEmpty()}${it.broken?.let { b -> tr("\n不可用：$b", "\nUnavailable: $b") }.orEmpty()}"
                     }.toTypedArray()
                     AlertDialog.Builder(this)
-                        .setTitle("Agent 模式")
+                        .setTitle(tr("Agent 模式", "Agent mode"))
                         .setItems(labels) { _, which ->
                             val chosen = presets[which]
                             when {
-                                session == null -> Toast.makeText(this, "请先新建会话", Toast.LENGTH_SHORT).show()
-                                !session.blank -> Toast.makeText(this, "Agent 模式只能在会话开始前切换", Toast.LENGTH_LONG).show()
+                                session == null -> Toast.makeText(this, tr("请先新建会话", "Create a session first"), Toast.LENGTH_SHORT).show()
+                                !session.blank -> Toast.makeText(this, tr("Agent 模式只能在会话开始前切换", "Agent mode can only be changed before the session starts"), Toast.LENGTH_LONG).show()
                                 chosen.broken != null -> Toast.makeText(this, chosen.broken, Toast.LENGTH_LONG).show()
                                 else -> applyAgentPreset(session, chosen)
                             }
                         }
-                        .setNegativeButton("关闭", null)
+                        .setNegativeButton(tr("关闭", "Close"), null)
                         .show()
                 }
             } catch (error: Exception) {
@@ -3181,18 +4144,21 @@ class MainActivity : Activity() {
     }
 
     private fun showMenu(anchor: View) {
+        val refreshLabel = tr("刷新", "Refresh")
+        val sessionActionLabel = if (currentSession?.running == true) tr("停止当前任务", "Stop current task") else tr("新建会话", "New session")
+        val browserLabel = tr("在浏览器中打开", "Open in browser")
+        val shareLabel = tr("分享地址", "Share address")
         PopupMenu(this, anchor).apply {
-            menu.add("刷新")
-            menu.add(if (currentSession?.running == true) "停止当前任务" else "新建会话")
-            menu.add("在浏览器中打开")
-            menu.add("分享地址")
+            menu.add(refreshLabel)
+            menu.add(sessionActionLabel)
+            menu.add(browserLabel)
+            menu.add(shareLabel)
             setOnMenuItemClickListener { item ->
                 when (item.title.toString()) {
-                    "刷新" -> refresh(true)
-                    "停止当前任务" -> cancelCurrent()
-                    "新建会话" -> showNewSession()
-                    "在浏览器中打开" -> serverUrl?.let { openExternal(Uri.parse(it)) }
-                    "分享地址" -> shareAddress()
+                    refreshLabel -> refresh(true)
+                    sessionActionLabel -> if (currentSession?.running == true) cancelCurrent() else showNewSession()
+                    browserLabel -> serverUrl?.let { openExternal(Uri.parse(it)) }
+                    shareLabel -> shareAddress()
                 }
                 true
             }
@@ -3217,7 +4183,7 @@ class MainActivity : Activity() {
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, address)
-        }, "Share DeepSeek Harness Mobile"))
+        }, tr("分享 DeepSeek Harness Mobile", "Share DeepSeek Harness Mobile")))
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -3259,7 +4225,7 @@ class MainActivity : Activity() {
 
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
                 handler.cancel()
-                Toast.makeText(this@MainActivity, "安全证书验证失败", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MainActivity, tr("安全证书验证失败", "Security certificate verification failed"), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -3276,7 +4242,7 @@ class MainActivity : Activity() {
             showServerSetup()
             return
         }
-        updateStatus("请登录", STATUS_VERIFY)
+        updateStatus(tr("请登录", "Sign in required"), STATUS_VERIFY)
         if (authOverlay.visibility != View.VISIBLE) {
             authOverlay.visibility = View.VISIBLE
             authWebView.loadUrl(address)
@@ -3294,7 +4260,7 @@ class MainActivity : Activity() {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, uri))
         } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tr("无法打开链接", "Unable to open link"), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -3302,7 +4268,7 @@ class MainActivity : Activity() {
         statusView.text = "· $label"
         statusView.setTextColor(
             when (kind) {
-                STATUS_CONNECTED -> if (label == "运行中") COLOR_BLUE else COLOR_MUTED
+                STATUS_CONNECTED -> if (label == tr("运行中", "Running")) COLOR_BLUE else COLOR_MUTED
                 STATUS_VERIFY -> COLOR_AMBER
                 STATUS_ERROR -> COLOR_RED
                 else -> COLOR_MUTED
@@ -3408,7 +4374,9 @@ class MainActivity : Activity() {
         super.onResume()
         paused = false
         authWebView.onResume()
-        if (debugTodoPreview || debugControlsPreview || debugApprovalPreview) return
+        if (debugTodoPreview || debugControlsPreview || debugApprovalPreview ||
+            debugActivityPreview || debugMessageActionsPreview || debugProviderOnboardingPreview
+        ) return
         if (serverUrl == null) return
         mainHandler.removeCallbacks(poll)
         mainHandler.postDelayed(poll, 1_000)
@@ -3503,16 +4471,32 @@ class MainActivity : Activity() {
     private val COLOR_AMBER get() = palette.amber
     private val COLOR_APPROVAL_STRIP get() = palette.approvalStrip
     private val COLOR_RED get() = palette.red
+    // Official Harness dark tokens from ui-theme/design-platform.css. The onboarding surface stays
+    // visually identical to Web even when the surrounding native conversation uses light mode.
+    private val COLOR_ONBOARDING_CARD get() = Color.rgb(44, 44, 46)
+    private val COLOR_ONBOARDING_INPUT get() = Color.rgb(35, 35, 36)
+    private val COLOR_ONBOARDING_PRIMARY get() = Color.rgb(249, 250, 251)
+    private val COLOR_ONBOARDING_PRIMARY_FOREGROUND get() = Color.rgb(15, 17, 21)
+    private val COLOR_ONBOARDING_SECONDARY get() = Color.rgb(207, 211, 214)
+    private val COLOR_ONBOARDING_DIMMED get() = Color.rgb(67, 69, 74)
+    private val COLOR_ONBOARDING_BORDER get() = Color.argb(15, 255, 255, 255)
+    private val COLOR_ONBOARDING_BORDER_L2 get() = Color.argb(31, 255, 255, 255)
+    private val COLOR_ONBOARDING_ERROR get() = Color.rgb(242, 90, 90)
 
     companion object {
         private const val PREFS_NAME = "deepseek_remote_preferences"
         private const val PREF_SERVER_URL = "server_base_url"
+        private const val PREF_SERVER_URLS = "server_base_urls"
+        private const val COMMAND_BUTTON_ROTATION_MS = 180L
         private const val PREF_THEME = "appearance_theme"
+        private const val PREF_LANGUAGE = "app_language"
         private const val REQUEST_NOTIFICATIONS = 4101
         private const val EXTRA_DEBUG_TODO_PREVIEW = "debug_todo_preview"
         private const val EXTRA_DEBUG_CONTROLS_PREVIEW = "debug_controls_preview"
         private const val EXTRA_DEBUG_APPROVAL_PREVIEW = "debug_approval_preview"
         private const val EXTRA_DEBUG_ACTIVITY_PREVIEW = "debug_activity_preview"
+        private const val EXTRA_DEBUG_MESSAGE_ACTIONS_PREVIEW = "debug_message_actions_preview"
+        private const val EXTRA_DEBUG_PROVIDER_ONBOARDING_PREVIEW = "debug_provider_onboarding_preview"
         private const val DRAWER_WIDTH_FRACTION = 0.86f
         private const val DRAWER_MAX_WIDTH_DP = 264
         private const val PREF_DEFAULT_WORKSPACE_ID = "default_workspace_id"
@@ -3524,6 +4508,7 @@ class MainActivity : Activity() {
         private const val STREAM_NEWEST_ALPHA = 92
         private const val LIVE_REFRESH_MS = 90L
         private const val STREAM_RECONNECT_MS = 800L
+        private const val MESSAGE_FOLLOW_THRESHOLD_DP = 72
         private val LIVE_SESSION_FRAMES = setOf("session/event", "session/projection", "session/queue", "session/jobs")
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT

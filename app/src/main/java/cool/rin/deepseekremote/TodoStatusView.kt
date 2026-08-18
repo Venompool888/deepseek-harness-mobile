@@ -24,10 +24,11 @@ internal class TodoStatusView(context: Context, initialStatus: String) : View(co
     private var animator: ValueAnimator? = null
 
     init {
+        val language = context.resolvedAppLanguage()
         contentDescription = when (status) {
-            "completed" -> "已完成"
-            "in_progress" -> "进行中"
-            else -> "待处理"
+            "completed" -> language.text("已完成", "Completed")
+            "in_progress" -> language.text("进行中", "In progress")
+            else -> language.text("待处理", "Pending")
         }
     }
 

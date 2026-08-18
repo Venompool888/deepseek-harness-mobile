@@ -18,7 +18,7 @@ internal class ContextMeterView(context: Context) : View(context) {
     var percent: Int = 0
         set(value) {
             field = value.coerceIn(0, 100)
-            contentDescription = "${field}% of context used"
+            contentDescription = context.resolvedAppLanguage().text("已使用 ${field}% 上下文", "${field}% of context used")
             invalidate()
         }
 

@@ -4,23 +4,23 @@ import java.net.URI
 import java.util.Locale
 
 internal object ServerConfig {
-    fun normalize(input: String): String {
+    fun normalize(input: String, language: AppLanguage = AppLanguage.ENGLISH): String {
         val trimmed = input.trim()
-        require(trimmed.isNotEmpty()) { "请输入 Harness 服务器地址" }
+        require(trimmed.isNotEmpty()) { language.text("请输入 Harness 服务器地址", "Enter a Harness server address") }
         val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
         val uri = runCatching { URI(withScheme) }
-            .getOrElse { throw IllegalArgumentException("服务器地址格式不正确") }
+            .getOrElse { throw IllegalArgumentException(language.text("服务器地址格式不正确", "The server address is invalid")) }
         val scheme = uri.scheme?.lowercase(Locale.US)
         val host = uri.host?.lowercase(Locale.US)
-        require(scheme == "https" || scheme == "http") { "仅支持 HTTPS 或内网 HTTP 地址" }
-        require(!host.isNullOrBlank()) { "服务器地址缺少主机名或 IP" }
+        require(scheme == "https" || scheme == "http") { language.text("仅支持 HTTPS 或内网 HTTP 地址", "Only HTTPS or private-network HTTP addresses are supported") }
+        require(!host.isNullOrBlank()) { language.text("服务器地址缺少主机名或 IP", "The server address is missing a host name or IP") }
         require(uri.userInfo == null && uri.query == null && uri.fragment == null) {
-            "请只填写服务器地址，不要包含账号、参数或片段"
+            language.text("请只填写服务器地址，不要包含账号、参数或片段", "Enter only the server address, without credentials, parameters, or fragments")
         }
-        require(uri.path.isNullOrEmpty() || uri.path == "/") { "服务器地址不能包含路径" }
-        require(uri.port in -1..65535) { "服务器端口不正确" }
+        require(uri.path.isNullOrEmpty() || uri.path == "/") { language.text("服务器地址不能包含路径", "The server address cannot contain a path") }
+        require(uri.port in -1..65535) { language.text("服务器端口不正确", "The server port is invalid") }
         require(scheme != "http" || isPrivateHost(host)) {
-            "公网地址必须使用 HTTPS；HTTP 仅允许私有内网地址"
+            language.text("公网地址必须使用 HTTPS；HTTP 仅允许私有内网地址", "Public addresses must use HTTPS; HTTP is only allowed for private network addresses")
         }
         return URI(scheme, null, host, uri.port, null, null, null).toString()
     }

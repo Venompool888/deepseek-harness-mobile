@@ -73,6 +73,56 @@ class ChatProjectionTest {
     }
 
     @Test
+    fun attachesOfficialActionsOnlyToCompletedTurnTailWithMetrics() {
+        val assistant = JSONObject()
+            .put("turn", 3)
+            .put("step", 1)
+            .put("usage", JSONObject().put("outputTokens", 176))
+            .put("message", JSONObject()
+                .put("id", "assistant-message-3")
+                .put("content", JSONArray().put(text("finished answer"))))
+        val history = JSONArray()
+            .put(eventAt(1, 1_000, "turn/start", JSONObject().put("turn", 3)))
+            .put(eventAt(2, 2_000, "step/start", JSONObject().put("turn", 3).put("step", 1)))
+            .put(eventAt(3, 3_100, "assistant/chunk", chunk(3, 1, "first token")))
+            .put(eventAt(4, 5_100, "assistant/message", assistant))
+            .put(eventAt(5, 8_000, "turn/end", JSONObject()
+                .put("turn", 3)
+                .put("reason", JSONObject().put("kind", "complete"))))
+
+        val footer = ChatProjection.fromHistory(history).single().assistantFooter!!
+
+        assertEquals("assistant-message-3", footer.messageId)
+        assertEquals(4L, footer.atSeq)
+        assertEquals(7_000L, footer.runMs)
+        assertEquals(1_100L, footer.ttftMs)
+        assertEquals(88.0, footer.tokensPerSecond!!, 0.001)
+    }
+
+    @Test
+    fun omitsActionsUntilTurnEndsAndUsesLastTextMessage() {
+        fun assistant(turn: Int, step: Int, id: String, value: String) = JSONObject()
+            .put("turn", turn)
+            .put("step", step)
+            .put("message", JSONObject().put("id", id).put("content", JSONArray().put(text(value))))
+        val history = JSONArray()
+            .put(eventAt(1, 1_000, "turn/start", JSONObject().put("turn", 1)))
+            .put(eventAt(2, 1_100, "step/start", JSONObject().put("turn", 1).put("step", 1)))
+            .put(eventAt(3, 1_200, "assistant/message", assistant(1, 1, "early", "early")))
+            .put(eventAt(4, 1_300, "assistant/message", assistant(1, 2, "tail", "tail")))
+
+        val running = ChatProjection.fromHistory(history)
+        assertTrue(running.all { it.assistantFooter == null })
+
+        history.put(eventAt(5, 1_400, "turn/end", JSONObject()
+            .put("turn", 1)
+            .put("reason", JSONObject().put("kind", "complete"))))
+        val completed = ChatProjection.fromHistory(history)
+        assertEquals(null, completed.first().assistantFooter)
+        assertEquals("tail", completed.last().assistantFooter?.messageId)
+    }
+
+    @Test
     fun summarizesTodoWriteWithDedicatedActivityChrome() {
         val args = JSONObject().put("todos", JSONArray()
             .put(JSONObject().put("content", "done").put("status", "completed"))
@@ -196,6 +246,9 @@ class ChatProjectionTest {
         .put("event", JSONObject().put("seq", seq).put("time", seq * 1000L).put("type", type).put("data", data).apply {
             if (surfaceOp != null) put("surfaceOp", surfaceOp)
         })
+
+    private fun eventAt(seq: Int, time: Long, type: String, data: JSONObject) = JSONObject()
+        .put("event", JSONObject().put("seq", seq).put("time", time).put("type", type).put("data", data))
 
     private fun text(value: String) = JSONObject().put("type", "text").put("text", value)
 

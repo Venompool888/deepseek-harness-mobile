@@ -51,7 +51,7 @@ class TaskMonitorService : Service() {
             if (serverUrl != null && serverUrl != incomingUrl) watched.clear()
             serverUrl = incomingUrl
             ids.forEachIndexed { index, id ->
-                val title = titles.getOrNull(index).orEmpty().ifBlank { "未命名会话" }
+                val title = titles.getOrNull(index).orEmpty().ifBlank { resolvedAppLanguage().text("未命名会话", "Untitled session") }
                 val existing = watched[id]
                 if (existing == null) watched[id] = WatchedSession(title, observedAt, confirmed)
                 else {
@@ -105,7 +105,7 @@ class TaskMonitorService : Service() {
         val completed = mutableListOf<Pair<String, WatchedSession>>()
         synchronized(lock) {
             running.forEach { (id, session) ->
-                val title = session.title.orEmpty().ifBlank { "未命名会话" }
+                val title = session.title.orEmpty().ifBlank { resolvedAppLanguage().text("未命名会话", "Untitled session") }
                 watched[id]?.let {
                     it.title = title
                     it.confirmedRunning = true
@@ -199,10 +199,11 @@ class TaskMonitorService : Service() {
         }
 
         private fun liveNotification(context: Context, sessionId: String, title: String): Notification {
+            val language = context.resolvedAppLanguage()
             val builder = Notification.Builder(context, CHANNEL_LIVE)
                 .setSmallIcon(R.drawable.ic_notification_harness)
                 .setContentTitle(title)
-                .setContentText("Harness 任务运行中")
+                .setContentText(language.text("Harness 任务运行中", "Harness task running"))
                 .setSubText("DeepSeek Harness")
                 .setContentIntent(openAppIntent(context, sessionId))
                 .setCategory(Notification.CATEGORY_PROGRESS)
@@ -224,16 +225,17 @@ class TaskMonitorService : Service() {
                 })
             } else {
                 builder.setProgress(0, 0, true)
-                    .setStyle(Notification.BigTextStyle().bigText("Harness 任务运行中"))
+                    .setStyle(Notification.BigTextStyle().bigText(language.text("Harness 任务运行中", "Harness task running")))
             }
             return builder.build()
         }
 
         private fun completedNotification(context: Context, sessionId: String, title: String, excerpt: String): Notification {
+            val language = context.resolvedAppLanguage()
             val builder = Notification.Builder(context, CHANNEL_LIVE)
                 .setSmallIcon(R.drawable.ic_notification_harness)
                 .setColor(Color.rgb(52, 199, 89))
-                .setContentTitle("✅ 已完成 · $title")
+                .setContentTitle(language.text("✅ 已完成 · $title", "✅ Completed · $title"))
                 .setContentText(excerpt)
                 .setSubText("DeepSeek Harness")
                 .setContentIntent(openAppIntent(context, sessionId))
@@ -251,7 +253,7 @@ class TaskMonitorService : Service() {
                             .setProgress(100)
                             .setProgressTrackerIcon(harnessIcon(context)),
                     )
-                    .setShortCriticalText("✅ 已完成")
+                    .setShortCriticalText(language.text("✅ 已完成", "✅ Completed"))
                     .addExtras(android.os.Bundle().apply {
                         putBoolean("android.requestPromotedOngoing", true)
                     })
@@ -275,13 +277,14 @@ class TaskMonitorService : Service() {
         )
 
         private fun ensureChannels(context: Context) {
+            val language = context.resolvedAppLanguage()
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(
                 CHANNEL_LIVE,
-                "运行中的 Harness 任务",
+                language.text("运行中的 Harness 任务", "Running Harness tasks"),
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = "在任务运行期间显示状态，并允许系统提升为实时活动"
+                description = language.text("在任务运行期间显示状态，并允许系统提升为实时活动", "Shows task status while running and lets the system promote it to a live activity")
                 setSound(null, null)
                 enableVibration(false)
             })
