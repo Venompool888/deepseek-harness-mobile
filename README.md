@@ -69,7 +69,7 @@
   <img src="docs/images/oppo/01-github-release-apk.png" width="320" alt="在 OPPO 手机上从 GitHub Release 下载 APK">
 </p>
 
-> 当前 v1.1.0 APK 的 SHA-256：`e026a373b3a9359293e3daeced3cfa08a0df109dd91d4d489a1f37f737c54fde`
+> 当前 v1.1.0 APK 的 SHA-256：`60e39df2e6e36210b752e21ec902211ef17becd5bad3824df90ef7318e3bf265`
 
 ## 首次连接
 
