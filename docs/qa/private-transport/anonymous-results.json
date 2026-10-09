@@ -1,0 +1,74 @@
+[
+  {
+    "path": "root",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "native RPC",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "fixed RPC",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "native WS",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "actual RPC",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "actual stream",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "actual export",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "malformed anonymous RPC",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  },
+  {
+    "path": "anonymous WS upgrade",
+    "status": 404,
+    "bodyBytes": 0,
+    "setCookie": false,
+    "location": false,
+    "server": false
+  }
+]

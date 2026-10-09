@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Harness Mobile - rc.2 原生客户端界面设计预览 (Synthetic Preview)</title>
+  <style>
+    /* CSS Reset & Baseline */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      
+      /* Global preview background */
+      --preview-bg: #0F172A;
+      --preview-card: #1E293B;
+      --preview-text: #F8FAFC;
+      --preview-muted: #94A3B8;
+      --preview-accent: #38BDF8;
+      --preview-synthetic: #F59E0B;
+
+      /* Material 3 App Colors - Light default, overridden by class */
+      --app-surface: #FFFFFF;
+      --app-composer: #FFFFFF;
+      --app-composer-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      --app-code-surface: #F9FAFB;
+      --app-control: #F5F6F7;
+      --app-control-text: #353638;
+      --app-text: #0F1115;
+      --app-muted: #61666B;
+      --app-border: #CFD3D6;
+      --app-border-subtle: #EBEFF2;
+      --app-user-bubble: #EDF3FE;
+      --app-blue: #4176E6;
+      --app-blue-hover: #3264D4;
+      --app-green: #22C55E;
+      --app-amber: #F59E0B;
+      --app-amber-bg: #FEF5E7;
+      --app-red: #EC1313;
+      --app-red-bg: #FEE2E2;
+      --app-primary-btn-fill: #0F1115;
+      --app-primary-btn-text: #FFFFFF;
+      --app-activity-icon: #61666B;
+      --app-todo-bg: #F5F6F7;
+      --app-todo-border: #E1E5EE;
+      --app-status-bar: rgba(0,0,0,0.04);
+    }
+
+    /* Dark Theme Tokens matching AppPalettes.DARK */
+    .theme-dark {
+      --app-surface: #000000;
+      --app-composer: #212121;
+      --app-composer-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+      --app-code-surface: #18181A;
+      --app-control: #1C1C1C;
+      --app-control-text: #D6D6D6;
+      --app-text: #F4F4F4;
+      --app-muted: #ABABAB;
+      --app-border: #4C4C4C;
+      --app-border-subtle: #3E3E3E;
+      --app-user-bubble: #2F2F2F;
+      --app-blue: #528BFF;
+      --app-blue-hover: #6B9CFF;
+      --app-green: #5BCF8B;
+      --app-amber: #FBBF24;
+      --app-amber-bg: #272318;
+      --app-red: #F87171;
+      --app-red-bg: #3B1818;
+      --app-primary-btn-fill: #F6F6F6;
+      --app-primary-btn-text: #181818;
+      --app-activity-icon: #BEC1C7;
+      --app-todo-bg: #363638;
+      --app-todo-border: #48484B;
+      --app-status-bar: rgba(255,255,255,0.06);
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--preview-bg);
+      color: var(--preview-text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 16px;
+      overflow-x: hidden;
+    }
+
+    /* Synthetic Disclaimer Banner */
+    .synthetic-disclaimer-bar {
+      width: 100%;
+      max-width: 960px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 10px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: #FCD34D;
+      margin-bottom: 16px;
+      line-height: 1.4;
+    }
+
+    /* Top Workspace Header & Control Toolbar */
+    .preview-header {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .preview-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .preview-title-block h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .preview-title-block p {
+      font-size: 13px;
+      color: var(--preview-muted);
+      margin-top: 4px;
+    }
+
+    .tag-badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--preview-accent);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      font-weight: 600;
+    }
+
+    .preview-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      background: var(--preview-card);
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      align-items: center;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--preview-muted);
+    }
+
+    .control-group label {
+      font-weight: 600;
+      color: #E2E8F0;
+    }
+
+    .segmented-btn {
+      display: flex;
+      background: rgba(0,0,0,0.3);
+      padding: 2px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .segmented-btn button {
+      background: transparent;
+      border: none;
+      color: #94A3B8;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .segmented-btn button.active {
+      background: #38BDF8;
+      color: #0F172A;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(56, 189, 248, 0.25);
+    }
+
+    .scenario-select {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: #F8FAFC;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* Device Mockup Canvas - Aimed strictly at 411dp width */
+    .device-container {
+      position: relative;
+      width: 411px;
+      max-width: 100%;
+      height: 840px;
+      background: var(--app-surface);
+      border-radius: 40px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 0 12px #2A2F3B;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      color: var(--app-text);
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    /* Android Status Bar (32dp) */
+    .status-bar {
+      height: 32px;
+      padding: 0 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--app-surface);
+      color: var(--app-text);
+      user-select: none;
+      z-index: 10;
+    }
+
+    .status-bar-icons {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    /* Top App Bar Header (56dp) */
+    .app-header {
+      height: 56px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--app-surface);
+      border-bottom: 1px solid var(--app-border-subtle);
+      z-index: 10;
+      position: relative;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .icon-touch-btn {
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 50%;
+      color: var(--app-text);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+
+    .icon-touch-btn:hover {
+      background: var(--app-control);
+    }
+
+    .header-title-block {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .header-title {
+      font-size: 17px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--app-text);
+    }
+
+    .header-status-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--app-muted);
+    }
+
+    .status-indicator-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status-dot-connected { background-color: var(--app-green); }
+    .status-dot-running { background-color: var(--app-blue); animation: pulse 1.5s infinite; }
+    .status-dot-reconnecting { background-color: var(--app-amber); animation: pulse 1s infinite; }
+    .status-dot-failed { background-color: var(--app-red); }
+    .status-dot-unconfigured { background-color: var(--app-muted); }
+
+    @keyframes pulse {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+      100% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .context-pill {
+      height: 32px;
+      padding: 0 10px;
+      background: var(--app-control);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--app-control-text);
+      cursor: pointer;
+      user-select: none;
+      min-width: 48px;
+      justify-content: center;
+    }
+
+    .context-pill-meter {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: conic-gradient(var(--app-blue) 0% 18%, var(--app-border) 18% 100%);
+    }
+
+    /* Reconnecting / Warning Banner */
+    .banner-bar {
+      padding: 8px 16px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 9;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    .banner-reconnecting {
+      background: var(--app-amber-bg);
+      color: var(--app-amber);
+      border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+    }
+
+    .banner-error {
+      background: var(--app-red-bg);
+      color: var(--app-red);
+      border-bottom: 1px solid rgba(236, 19, 19, 0.2);
+    }
+
+    .banner-auth {
+      background: var(--app-amber-bg);
+      color: var(--app-amber);
+      border-bottom: 1px solid rgba(245, 158, 11, 0.25);
+    }
+
+    /* Main Scrollable Chat Stream (Views Container) */
+    .chat-scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 16px 8px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      scroll-behavior: smooth;
+    }
+
+    /* Scroll Position Indicator for Keyboard Testing */
+    .scroll-anchor-pill {
+      align-self: center;
+      background: var(--app-control);
+      border: 1px dashed var(--app-border);
+      border-radius: 12px;
+      font-size: 11px;
+      color: var(--app-muted);
+      padding: 4px 10px;
+      user-select: none;
+    }
+
+    /* User Message Bubble */
+    .user-msg-row {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .user-bubble {
+      background: var(--app-user-bubble);
+      color: var(--app-text);
+      padding: 10px 16px;
+      border-radius: 20px;
+      font-size: 15px;
+      line-height: 1.45;
+      max-width: 290px;
+      word-break: break-word;
+    }
+
+    /* Assistant Activity & Disclosure Card */
+    .activity-card {
+      display: flex;
+      flex-direction: column;
+      margin: 2px 0;
+    }
+
+    .activity-header {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      padding: 0 4px;
+    }
+
+    .activity-icon-box {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--app-activity-icon);
+      font-size: 14px;
+    }
+
+    .activity-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--app-activity-icon);
+    }
+
+    .activity-dot {
+      color: var(--app-muted);
+      font-size: 12px;
+    }
+
+    .activity-summary {
+      font-size: 13px;
+      color: var(--app-muted);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .activity-chevron {
+      font-size: 12px;
+      color: var(--app-muted);
+      transition: transform 0.2s ease;
+    }
+
+    .activity-details {
+      margin-top: 4px;
+      margin-left: 32px;
+      padding: 10px 14px;
+      background: var(--app-code-surface);
+      border-radius: 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--app-muted);
+      border: 1px solid var(--app-border-subtle);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Assistant Running Shimmer State */
+    .turn-status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+    }
+
+    .shimmer-text {
+      font-size: 14px;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--app-blue) 0%, #93C5FD 50%, var(--app-blue) 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shimmerAnim 2s infinite linear;
+    }
+
+    @keyframes shimmerAnim {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .run-clock {
+      font-size: 12px;
+      color: var(--app-muted);
+    }
+
+    /* Assistant Content Bubble */
+    .assistant-bubble {
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--app-text);
+      padding: 2px 4px;
+      word-break: break-word;
+    }
+
+    .assistant-actions-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      color: var(--app-muted);
+      font-size: 12px;
+      overflow-x: auto;
+    }
+
+    .action-icon-small {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      cursor: pointer;
+      color: var(--app-muted);
+      border: none;
+      background: transparent;
+      font-size: 13px;
+    }
+
+    .action-icon-small:hover {
+      background: var(--app-control);
+      color: var(--app-text);
+    }
+
+    /* Bottom Dock & Composer Area */
+    .bottom-dock-host {
+      background: var(--app-surface);
+      padding: 4px 12px 12px 12px;
+      border-top: 1px solid var(--app-border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 10;
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Collapsible To-Dos Strip */
+    .todo-dock {
+      background: var(--app-todo-bg);
+      border: 1px solid var(--app-todo-border);
+      border-radius: 12px;
+      padding: 6px 12px;
+    }
+
+    .todo-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      min-height: 32px;
+    }
+
+    .todo-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--app-text);
+    }
+
+    .todo-count {
+      font-size: 12px;
+      color: var(--app-muted);
+      flex: 1;
+    }
+
+    .todo-list-expanded {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--app-border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .todo-item-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--app-control-text);
+    }
+
+    .todo-check {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+    .todo-check.done { background: var(--app-green); color: white; }
+    .todo-check.active { background: var(--app-blue); color: white; }
+    .todo-check.pending { border: 1.5px solid var(--app-border); }
+
+    /* Normal Composer Card */
+    .composer-card {
+      background: var(--app-composer);
+      border: 1px solid var(--app-border-subtle);
+      border-radius: 22px;
+      box-shadow: var(--app-composer-shadow);
+      padding: 8px 10px 6px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .composer-textarea {
+      width: 100%;
+      border: none;
+      background: transparent;
+      outline: none;
+      resize: none;
+      color: var(--app-text);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.4;
+      min-height: 44px;
+      max-height: 120px;
+    }
+
+    .composer-textarea::placeholder {
+      color: var(--app-muted);
+    }
+
+    .composer-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 48px;
+      gap: 4px;
+    }
+
+    .toolbar-left-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .pill-chip {
+      height: 36px;
+      padding: 0 10px;
+      border-radius: 18px;
+      background: var(--app-control);
+      color: var(--app-control-text);
+      font-size: 11px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+      border: none;
+      min-width: 48px;
+      justify-content: center;
+      transition: background 0.15s;
+    }
+
+    .pill-chip:hover {
+      background: var(--app-border-subtle);
+    }
+
+    /* Actions during Running & Idle states */
+    .composer-actions-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .main-action-btn {
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      border-radius: 22px;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .main-action-btn.send-enabled {
+      background: var(--app-blue);
+      color: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(65, 118, 230, 0.35);
+    }
+
+    .main-action-btn.send-disabled {
+      background: var(--app-control);
+      color: var(--app-muted);
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    /* Separate Stop Button during Active Run */
+    .stop-run-btn {
+      height: 40px;
+      padding: 0 12px;
+      border-radius: 20px;
+      background: var(--app-red-bg);
+      color: var(--app-red);
+      border: 1px solid rgba(236, 19, 19, 0.3);
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      min-width: 48px;
+    }
+
+    .stop-run-btn:hover {
+      background: var(--app-red);
+      color: #FFFFFF;
+    }
+
+    /* Queue Send Button during Run */
+    .queue-send-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 22px;
+      background: var(--app-blue);
+      color: #FFFFFF;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(65, 118, 230, 0.35);
+    }
+
+    /* Stats strip footer */
+    .stats-footer {
+      font-size: 10px;
+      color: var(--app-muted);
+      text-align: center;
+      padding-top: 2px;
+    }
+
+    /* NATIVE APPROVAL CARD SYSTEM */
+    .approval-card {
+      background: var(--app-code-surface);
+      border: 2px solid var(--app-amber);
+      border-radius: 20px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(245, 158, 11, 0.2);
+      animation: popIn 0.2s ease-out;
+    }
+
+    @keyframes popIn {
+      from { transform: scale(0.96); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .approval-strip-header {
+      background: var(--app-amber-bg);
+      height: 42px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .approval-live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 4px;
+      background: var(--app-amber);
+      animation: pulse 1s infinite;
+    }
+
+    .approval-strip-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--app-amber);
+    }
+
+    .approval-content-box {
+      padding: 14px 16px 8px 16px;
+      max-height: 220px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .approval-reason-text {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--app-text);
+      line-height: 1.4;
+    }
+
+    .approval-cmd-preview {
+      background: var(--app-surface);
+      border: 1px solid var(--app-border-subtle);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--app-control-text);
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    .approval-draft-notice {
+      font-size: 11px;
+      color: var(--app-muted);
+      padding: 2px 16px 0 16px;
+      font-style: italic;
+    }
+
+    .approval-actions-bar {
+      padding: 8px 16px 14px 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      height: 64px;
+      align-items: center;
+    }
+
+    .btn-approval-reject {
+      height: 44px;
+      padding: 0 18px;
+      border-radius: 22px;
+      border: 1px solid var(--app-border);
+      background: transparent;
+      color: var(--app-text);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      min-width: 80px;
+    }
+
+    .btn-approval-allow {
+      height: 44px;
+      padding: 0 20px;
+      border-radius: 22px;
+      border: none;
+      background: var(--app-primary-btn-fill);
+      color: var(--app-primary-btn-text);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      min-width: 110px;
+    }
+
+    .btn-approval-allow:disabled,
+    .btn-approval-reject:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Modal / Dialog Overlay Simulation */
+    .modal-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(2px);
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeIn 0.15s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal-dialog {
+      width: 100%;
+      max-width: 360px;
+      background: var(--app-composer);
+      border: 1px solid var(--app-border-subtle);
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .modal-dialog-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--app-text);
+    }
+
+    .modal-dialog-desc {
+      font-size: 13px;
+      color: var(--app-muted);
+      line-height: 1.45;
+    }
+
+    .input-field {
+      width: 100%;
+      background: var(--app-control);
+      border: 1px solid var(--app-border);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      color: var(--app-text);
+      outline: none;
+    }
+
+    .input-field:focus {
+      border-color: var(--app-blue);
+    }
+
+    .dialog-pill-hint {
+      background: rgba(65, 118, 230, 0.12);
+      border: 1px solid rgba(65, 118, 230, 0.25);
+      color: var(--app-blue);
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      line-height: 1.35;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      margin-top: 6px;
+    }
+
+    .dialog-btn-secondary {
+      height: 44px;
+      padding: 0 16px;
+      background: transparent;
+      border: none;
+      color: var(--app-muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .dialog-btn-primary {
+      height: 44px;
+      padding: 0 18px;
+      background: var(--app-blue);
+      border: none;
+      border-radius: 22px;
+      color: #FFFFFF;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Interactive Menu Popover */
+    .popover-menu {
+      position: absolute;
+      bottom: 80px;
+      right: 16px;
+      background: var(--app-composer);
+      border: 1px solid var(--app-border);
+      border-radius: 16px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.3);
+      padding: 8px;
+      width: 260px;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .menu-header-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--app-muted);
+      padding: 4px 10px;
+    }
+
+    .menu-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--app-text);
+      min-height: 44px;
+    }
+
+    .menu-item-row:hover {
+      background: var(--app-control);
+    }
+
+    .menu-item-row.selected {
+      font-weight: 600;
+      color: var(--app-blue);
+    }
+
+    /* Submenu for host-advertised effort */
+    .effort-roster-box {
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px dashed var(--app-border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    /* Android System Navigation Bar (36dp) */
+    .android-nav-bar {
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--app-surface);
+      z-index: 10;
+    }
+
+    .nav-pill-handle {
+      width: 90px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--app-border);
+    }
+
+    /* Keyboard simulator */
+    .keyboard-simulator {
+      background: #1C1F26;
+      height: 220px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #94A3B8;
+      font-size: 13px;
+      border-top: 1px solid #334155;
+      gap: 8px;
+      user-select: none;
+      animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+
+    /* Floating Toast Notification */
+    .floating-toast {
+      position: absolute;
+      top: 72px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      color: #FFFFFF;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 60;
+      pointer-events: none;
+      white-space: nowrap;
+      animation: toastPop 0.2s ease-out;
+    }
+
+    @keyframes toastPop {
+      from { transform: translate(-50%, -10px); opacity: 0; }
+      to { transform: translate(-50%, 0); opacity: 1; }
+    }
+
+    /* Accessibility indicator badge overlay */
+    .touch-target-indicator {
+      outline: 1.5px dashed rgba(244, 63, 94, 0.6) !important;
+      position: relative;
+    }
+
+    .touch-target-indicator::after {
+      content: "48dp";
+      position: absolute;
+      top: -8px;
+      right: -4px;
+      background: #E11D48;
+      color: white;
+      font-size: 9px;
+      padding: 1px 3px;
+      border-radius: 3px;
+      pointer-events: none;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body class="theme-dark">
+
+  <!-- Synthetic Disclaimer Bar -->
+  <div class="synthetic-disclaimer-bar">
+    <span style="font-size: 16px;">⚠️</span>
+    <span id="txt-disclaimer">
+      本界面为纯前端设计交互原型，所有会话、模型与凭据数据均为<strong>合成模拟数据 (Synthetic Mock)</strong>。操作仅在本地演示视觉与交互状态，不连接真实服务器，亦不反映真实后端状态。
+    </span>
+  </div>
+
+  <!-- Outer Dashboard & Scenario Switcher -->
+  <header class="preview-header">
+    <div class="preview-title-row">
+      <div class="preview-title-block">
+        <h1>
+          DeepSeek Harness Mobile
+          <span class="tag-badge">0.2.0-rc.2 界面交互预览</span>
+        </h1>
+        <p>基于原生 Views 架构 · 411dp 紧凑型手机 · 人性化状态与草稿保护</p>
+      </div>
+
+      <div class="preview-controls">
+        <div class="control-group">
+          <label id="lbl-theme">主题:</label>
+          <div class="segmented-btn">
+            <button id="btn-theme-dark" class="active" onclick="setTheme('dark')">深色 (Dark)</button>
+            <button id="btn-theme-light" onclick="setTheme('light')">浅色 (Light)</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label id="lbl-lang">语言:</label>
+          <div class="segmented-btn">
+            <button id="btn-lang-zh" class="active" onclick="setLanguage('zh')">中文</button>
+            <button id="btn-lang-en" onclick="setLanguage('en')">English</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label id="lbl-scenario">交互场景:</label>
+          <select id="scenario-selector" class="scenario-select" onchange="switchScenario(this.value)">
+            <option value="connected">1. 正常已连接 · 会话就绪 (Connected)</option>
+            <option value="running">2. 任务执行中 · 思考/插队排队/停止 (Running)</option>
+            <option value="approval">3. 原生审批卡片 · 草稿完整保留 (Approval)</option>
+            <option value="reconnecting">4. 网络重连与自动快照修复 (Reconnecting)</option>
+            <option value="setup">5. 首次连接与启动链接导入 (Link Import)</option>
+            <option value="auth-expired">6. Harness 凭据失效 · 需新启动链接 (Auth Expired)</option>
+            <option value="cf-auth">7. 外部网关访问验证 (Cloudflare Access)</option>
+            <option value="error-version">8. 版本不匹配 · 仅适配 rc.2 (Incompatible)</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <button id="btn-toggle-keyboard" class="pill-chip" style="height:30px; font-size:11px;" onclick="toggleKeyboard()">
+            ⌨ 键盘弹出模拟
+          </button>
+          <button id="btn-toggle-a11y" class="pill-chip" style="height:30px; font-size:11px;" onclick="toggleA11yGuide()">
+            🎯 48dp 触控辅助线
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Phone Mockup Container (411dp) -->
+  <main class="device-container" id="device-screen">
+    
+    <!-- Toast Message Container -->
+    <div id="toast-message" class="floating-toast" style="display: none;"></div>
+
+    <!-- Android Status Bar -->
+    <div class="status-bar">
+      <span>20:42</span>
+      <div class="status-bar-icons">
+        <span>5G</span>
+        <span>88%</span>
+      </div>
+    </div>
+
+    <!-- Top App Bar (56dp) -->
+    <header class="app-header">
+      <div class="header-left">
+        <button class="icon-touch-btn" aria-label="打开侧边栏" title="侧栏菜单">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+        <div class="header-title-block">
+          <span class="header-title" id="txt-session-title">电商系统重构调研 (模拟)</span>
+          <div class="header-status-row">
+            <span class="status-indicator-dot status-dot-connected" id="status-dot"></span>
+            <span id="txt-header-status">已连接</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="context-pill" onclick="toggleContextPopup()" title="查看上下文使用明细">
+          <div class="context-pill-meter"></div>
+          <span>18%</span>
+        </div>
+        <button class="icon-touch-btn" aria-label="更多操作" onclick="showToast(currentLang === 'zh' ? '会话操作: 新建会话 / 刷新 / 在浏览器中打开' : 'Menu: New session / Refresh / Open in browser')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="1"></circle>
+            <circle cx="12" cy="5" r="1"></circle>
+            <circle cx="12" cy="19" r="1"></circle>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Dynamic Warning / Reconnecting Banner -->
+    <div id="status-banner" class="banner-bar banner-reconnecting" style="display: none;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span id="txt-banner-msg">正在重新连接服务器，保留当前会话…</span>
+    </div>
+
+    <!-- Scrollable Chat Stream -->
+    <section class="chat-scroll-area" id="chat-messages" onscroll="handleUserScroll()">
+      
+      <!-- Reading anchor test notice -->
+      <div class="scroll-anchor-pill" id="scroll-anchor-pill" onclick="simulateReadOldMessage()">
+        📌 点击模拟翻阅较早历史（测试键盘弹出保持阅读锚点）
+      </div>
+
+      <!-- User message turn -->
+      <div class="user-msg-row">
+        <div class="user-bubble" id="txt-user-prompt">
+          请分析我们当前的库存同步服务，并生成一个修复数据库锁竞争的方案。
+        </div>
+      </div>
+
+      <!-- Agent Activity 1: Think (Expandable) -->
+      <div class="activity-card">
+        <div class="activity-header" onclick="toggleActivity('think-details')">
+          <div class="activity-icon-box">🧠</div>
+          <span class="activity-label" id="txt-think-label">思考</span>
+          <span class="activity-dot">·</span>
+          <span class="activity-summary" id="txt-think-summary">已分析 PostgreSQL 事务行级锁排查路径</span>
+          <span class="activity-chevron" id="chevron-think">▼</span>
+        </div>
+        <div class="activity-details" id="think-details">
+1. 观察当前会话日志与任务上下文
+2. 锁定 inventory_updater.py 中的 SELECT FOR UPDATE 语句
+3. 判断重试策略与死锁超时间隙
+4. 规划编写无阻塞安全脚本...
+        </div>
+      </div>
+
+      <!-- Agent Activity 2: Tool Call (Expandable) -->
+      <div class="activity-card">
+        <div class="activity-header" onclick="toggleActivity('tool-details')">
+          <div class="activity-icon-box">⚙️</div>
+          <span class="activity-label" id="txt-tool-label">工具调用</span>
+          <span class="activity-dot">·</span>
+          <span class="activity-summary" id="txt-tool-summary">读取 /services/inventory_repo.py (54 行)</span>
+          <span class="activity-chevron" id="chevron-tool">▼</span>
+        </div>
+        <div class="activity-details" id="tool-details" style="display: none;">
+[Read File] /services/inventory_repo.py
+Status: 200 OK (54 lines retrieved)
+Found conflicting row-lock on batch update.
+        </div>
+      </div>
+
+      <!-- Running Shimmer Turn (Only visible when scenario is running) -->
+      <div class="turn-status-row" id="running-indicator-row" style="display: none;">
+        <span class="shimmer-text" id="txt-shimmer-msg">深入思考中…</span>
+        <span class="run-clock">· 24s</span>
+      </div>
+
+      <!-- Assistant Final Markdown Response -->
+      <div class="assistant-bubble" id="txt-assistant-body">
+        针对高并发库存扣减中的锁竞争问题，核心原因在于批量更新时未按固定主键顺序加锁，导致双向等待引发死锁。<br><br>
+        建议优化为：<br>
+        1. 写入前按 <code>sku_id ASC</code> 统一升序排列事务更新键；<br>
+        2. 引入指数退避重试并配置 <code>NOWAIT</code> 避免挂死连接池。
+      </div>
+
+      <!-- Assistant Actions Footer -->
+      <div class="assistant-actions-footer">
+        <button class="action-icon-small" title="复制回答" onclick="showToast(currentLang === 'zh' ? '已复制回答到剪贴板' : 'Copied to clipboard')">📋</button>
+        <button class="action-icon-small" title="好评" onclick="showToast(currentLang === 'zh' ? '已记录正面反馈' : 'Recorded positive feedback')">👍</button>
+        <button class="action-icon-small" title="差评" onclick="showToast(currentLang === 'zh' ? '已记录负面反馈' : 'Recorded negative feedback')">👎</button>
+        <button class="action-icon-small" title="在此处创建分支" onclick="showToast(currentLang === 'zh' ? '已从此处创建分支会话' : 'Branched session')">🌿</button>
+        <span style="margin-left: 4px;">20:41 · 用时 4.2s · 46 tok/s</span>
+      </div>
+
+    </section>
+
+    <!-- Context Details Popover (Hidden by default) -->
+    <div id="context-popup" class="popover-menu" style="display: none; top: 64px; right: 16px; bottom: auto;">
+      <div style="font-size: 13px; font-weight: 700; padding: 4px 8px;" id="txt-context-title">已使用 18% 上下文</div>
+      <div style="height: 6px; background: var(--app-border-subtle); border-radius: 3px; overflow: hidden; margin: 4px 8px;">
+        <div style="width: 18%; height: 100%; background: var(--app-blue);"></div>
+      </div>
+      <div class="menu-item-row">
+        <span id="txt-sys-prompt">系统提示词</span>
+        <span>~4.2K</span>
+      </div>
+      <div class="menu-item-row">
+        <span id="txt-tools-usage">工具描述</span>
+        <span>~8.5K</span>
+      </div>
+      <div class="menu-item-row">
+        <span id="txt-msgs-usage">对话历史</span>
+        <span>~12.8K</span>
+      </div>
+    </div>
+
+    <!-- Dynamic Model & Advertised Effort Switcher Popover -->
+    <div id="model-popup" class="popover-menu" style="display: none;">
+      <div class="menu-header-label" id="txt-model-picker-title">选择运行模型 (服务端可用清单)</div>
+      <div id="model-options-list">
+        <!-- Rendered dynamically from hostModels roster -->
+      </div>
+    </div>
+
+    <!-- Bottom Dock Host -->
+    <footer class="bottom-dock-host">
+      
+      <!-- Collapsible To-dos Dock Strip -->
+      <div class="todo-dock" id="todo-container">
+        <div class="todo-header" onclick="toggleTodos()">
+          <span style="font-size: 14px;">📝</span>
+          <span class="todo-title" id="txt-todo-title">待办事项</span>
+          <span class="todo-count" id="txt-todo-count">2 已完成 · 1 进行中</span>
+          <span id="todo-chevron" style="font-size: 11px; color: var(--app-muted);">▲</span>
+        </div>
+        <div class="todo-list-expanded" id="todo-expanded-list">
+          <div class="todo-item-row">
+            <div class="todo-check done">✓</div>
+            <span style="text-decoration: line-through; opacity: 0.7;">定位 inventory_repo.py 锁争用</span>
+          </div>
+          <div class="todo-item-row">
+            <div class="todo-check active">▶</div>
+            <span>编写带有显式排序的修复补丁</span>
+          </div>
+          <div class="todo-item-row">
+            <div class="todo-check pending"></div>
+            <span style="opacity: 0.65;">运行压力测试验证死锁消除</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- NORMAL COMPOSER CARD (Kept usable during run for queueing/steering) -->
+      <div class="composer-card" id="normal-composer">
+        <textarea 
+          class="composer-textarea" 
+          id="composer-input" 
+          rows="1" 
+          placeholder="给智能体发送消息…" 
+          oninput="handleComposerInput(this)"
+        ></textarea>
+        
+        <div class="composer-toolbar">
+          <div class="toolbar-left-chips">
+            <button class="pill-chip" title="快捷命令" onclick="showToast(currentLang === 'zh' ? '支持命令: /compact, /permission, /plan, /export' : 'Commands: /compact, /permission, /plan, /export')">
+              <span>+</span>
+              <span id="txt-btn-commands">命令</span>
+            </button>
+            <button class="pill-chip" title="切换权限预设" onclick="showToast(currentLang === 'zh' ? '权限策略: 工作区写入许可' : 'Permission: Workspace Write')">
+              <span>🛡️</span>
+              <span id="txt-btn-perm">写入权限</span>
+            </button>
+            <button class="pill-chip" id="btn-model-chip" title="切换模型与强度" onclick="toggleModelPopup()">
+              <span id="txt-current-model">DeepSeek-R1 · High (64k)</span>
+              <span>▾</span>
+            </button>
+          </div>
+
+          <!-- Actions: Idle vs Running -->
+          <div class="composer-actions-right">
+            <!-- Separate Stop Button (Visible only when running) -->
+            <button class="stop-run-btn" id="btn-stop-action" style="display: none;" onclick="handleStopRun()">
+              <span>■</span>
+              <span id="txt-btn-stop">停止</span>
+            </button>
+
+            <!-- Main Send / Queue Button -->
+            <button class="main-action-btn send-disabled" id="btn-main-action" onclick="handleMainActionClick()">
+              <!-- Send Icon -->
+              <svg id="svg-send-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- NATIVE APPROVAL CARD (Replaces composer when in approval state, preserves draft) -->
+      <div class="approval-card" id="approval-card" style="display: none;">
+        <div class="approval-strip-header">
+          <div class="approval-live-dot"></div>
+          <span class="approval-strip-title" id="txt-approval-strip-title">等待审批 · 执行敏感命令</span>
+        </div>
+        <div class="approval-content-box">
+          <div class="approval-reason-text" id="txt-approval-reason">
+            智能体请求执行数据库迁移命令，将修改生产数据表结构。
+          </div>
+          <div class="approval-cmd-preview" id="txt-approval-cmd">
+python -m alembic upgrade head --tag "fix_inventory_deadlock"
+          </div>
+        </div>
+        <div class="approval-draft-notice" id="txt-approval-draft-notice" style="display: none;">
+          ℹ️ 输入框现有草稿已在本地安全保留，处理后自动恢复。
+        </div>
+        <div class="approval-actions-bar">
+          <button class="btn-approval-reject" id="btn-approval-reject" onclick="handleApprovalOutcome('rejected')">
+            拒绝
+          </button>
+          <button class="btn-approval-allow" id="btn-approval-allow" onclick="handleApprovalOutcome('allowed')">
+            允许一次
+          </button>
+        </div>
+      </div>
+
+      <!-- Stats Line -->
+      <div class="stats-footer" id="txt-stats-bar">
+        2 turns · 8 steps | LLM 1.8s · Tool call 3.2s | 42.1 tok/s
+      </div>
+
+    </footer>
+
+    <!-- Keyboard Simulator Component -->
+    <div class="keyboard-simulator" id="keyboard-view" style="display: none;">
+      <div style="font-weight: 600;">⌨️ Android 系统软键盘模拟 (adjustResize)</div>
+      <div style="font-size: 11px; opacity: 0.8;" id="txt-kb-anchor-status">
+        当前状态：保持用户阅读旧消息的滚动锚点（若在底部则自动跟随）
+      </div>
+      <button class="pill-chip" style="margin-top: 6px; background: rgba(255,255,255,0.1); color: white;" onclick="toggleKeyboard()">
+        收起键盘 (Dismiss)
+      </button>
+    </div>
+
+    <!-- Android Bottom Gesture Bar (36dp) -->
+    <div class="android-nav-bar">
+      <div class="nav-pill-handle"></div>
+    </div>
+
+    <!-- MODAL 1: Server Setup & Link Import Dialog -->
+    <div class="modal-overlay" id="modal-server-setup" style="display: none;">
+      <div class="modal-dialog">
+        <div class="modal-dialog-title" id="txt-setup-title">服务器连接</div>
+        <div class="modal-dialog-desc" id="txt-setup-desc">
+          输入运行 Harness 的服务器地址，或直接粘贴带有访问令牌的快速启动链接。
+        </div>
+
+        <input 
+          type="text" 
+          class="input-field" 
+          id="input-server-url" 
+          value="http://192.168.1.100:3080/?token=sec_dsh_token_demo" 
+          oninput="checkSetupInput(this.value)"
+        />
+
+        <!-- Smart Link Token Feedback -->
+        <div class="dialog-pill-hint" id="token-detected-hint">
+          ✓ 已识别快速启动链接，连接时将自动完成安全认证，地址将清洗保存。
+        </div>
+
+        <div class="dialog-actions">
+          <button class="dialog-btn-secondary" onclick="closeModal('modal-server-setup')">取消</button>
+          <button class="dialog-btn-primary" id="btn-connect-action" onclick="submitServerConnect()">测试并连接</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    /* State Tracking */
+    let currentTheme = 'dark';
+    let currentLang = 'zh';
+    let currentScenario = 'connected';
+    let isKeyboardUp = false;
+    let isA11yActive = false;
+    let isRunning = false;
+    let preservedDraft = '';
+    let isNearBottom = true;
+
+    /* Host Models Roster with Advertised Effort Lists (No Hardcoded Global Levels) */
+    const hostModels = [
+      {
+        id: 'deepseek-r1',
+        name: 'DeepSeek-R1',
+        efforts: [
+          { key: 'low', labelZh: 'Low (32k)', labelEn: 'Low (32k)' },
+          { key: 'high', labelZh: 'High (64k)', labelEn: 'High (64k)' }
+        ],
+        defaultEffort: 'high'
+      },
+      {
+        id: 'deepseek-v3',
+        name: 'DeepSeek-V3',
+        efforts: [], // Host advertises NO reasoning effort for this model
+        defaultEffort: null
+      },
+      {
+        id: 'deepseek-code',
+        name: 'DeepSeek-Coder',
+        efforts: [
+          { key: 'standard', labelZh: '标准分析', labelEn: 'Standard' },
+          { key: 'deep', labelZh: '深度穷举', labelEn: 'Deep Exploration' }
+        ],
+        defaultEffort: 'standard'
+      }
+    ];
+
+    let selectedModel = hostModels[0];
+    let selectedEffortKey = hostModels[0].defaultEffort;
+
+    const copyData = {
+      zh: {
+        disclaimer: "本界面为纯前端设计交互原型，所有会话、模型与凭据数据均为<strong>合成模拟数据 (Synthetic Mock)</strong>。操作仅在本地演示视觉与交互状态，不连接真实服务器，亦不反映真实后端状态。",
+        sessionTitle: "电商系统重构调研 (模拟)",
+        statusConnected: "已连接",
+        statusRunning: "运行中",
+        statusReconnecting: "正在重新连接…",
+        statusFailed: "连接失败",
+        statusAuthExpired: "凭据已失效",
+        statusCfAuth: "需访问验证",
+        statusUnconfigured: "未配置",
+        bannerReconnecting: "正在重新连接服务器，保留当前会话…",
+        bannerErrorVersion: "当前服务器版本与客户端不匹配。本客户端仅适配 dsh 0.2.0-rc.2，请检查服务器与客户端版本。",
+        bannerHarnessAuthExpired: "Harness 连接凭据已失效，请从桌面或命令行提供新的启动链接。",
+        bannerCfAuth: "需要外部访问网关验证 (Cloudflare Access)，请点击完成身份验证。",
+        userPrompt: "请分析我们当前的库存同步服务，并生成一个修复数据库锁竞争的方案。",
+        thinkLabel: "思考",
+        thinkSummary: "已分析 PostgreSQL 事务行级锁排查路径",
+        toolLabel: "工具调用",
+        toolSummary: "读取 /services/inventory_repo.py (54 行)",
+        shimmerMsg: "深入思考中…",
+        todoTitle: "待办事项",
+        todoCount: "2 已完成 · 1 进行中",
+        composerPlaceholder: "给智能体发送消息…",
+        composerPlaceholderRunning: "向运行中的智能体追加指令或排队…",
+        btnCommands: "命令",
+        btnPerm: "写入权限",
+        btnStop: "停止",
+        approvalStrip: "等待审批 · 执行敏感命令",
+        approvalReason: "智能体请求执行数据库迁移命令，将修改生产数据表结构。",
+        approvalDraftNotice: "ℹ️ 输入框现有草稿已在本地安全保留，处理后自动恢复。",
+        btnReject: "拒绝",
+        btnAllow: "允许一次",
+        btnSubmitting: "正在提交…",
+        setupTitle: "服务器连接",
+        setupDesc: "输入运行 Harness 的服务器地址，或直接粘贴带有访问令牌的快速启动链接。",
+        setupConnect: "测试并连接",
+        tokenDetected: "✓ 已识别快速启动链接，连接时将自动完成安全认证，地址将清洗保存。",
+        setupVerifying: "正在连接服务器…",
+        contextTitle: "已使用 18% 上下文",
+        sysPrompt: "系统提示词",
+        toolsUsage: "工具描述",
+        msgsUsage: "对话历史",
+        modelPickerTitle: "选择运行模型 (服务端可用清单)",
+        scrollAnchorNotice: "📌 点击模拟翻阅较早历史（测试键盘弹出保持阅读锚点）",
+        scrollAnchorTop: "已滚动至历史中间位置：弹起键盘时将严格保持当前阅读位置"
+      },
+      en: {
+        disclaimer: "Local preview prototype only. All session, model, and credential content is <strong>synthetic mock data</strong>. Interactions demonstrate local frontend behavior only and do not connect to a live server or reflect real state.",
+        sessionTitle: "Inventory Service Audit (Mock)",
+        statusConnected: "Connected",
+        statusRunning: "Running",
+        statusReconnecting: "Reconnecting…",
+        statusFailed: "Connection failed",
+        statusAuthExpired: "Credentials expired",
+        statusCfAuth: "Access auth required",
+        statusUnconfigured: "Not configured",
+        bannerReconnecting: "Reconnecting to server, preserving conversation…",
+        bannerErrorVersion: "Incompatible server version. This client targets dsh 0.2.0-rc.2. Please check both server and client versions.",
+        bannerHarnessAuthExpired: "Harness connection credentials expired. Please provide a fresh startup connection link.",
+        bannerCfAuth: "External access verification required (Cloudflare Access). Tap to sign in.",
+        userPrompt: "Analyze our inventory synchronization service and propose a deadlock fix.",
+        thinkLabel: "Think",
+        thinkSummary: "Analyzed PostgreSQL row lock contention path",
+        toolLabel: "Tool call",
+        toolSummary: "Read /services/inventory_repo.py (54 lines)",
+        shimmerMsg: "Deep diving…",
+        todoTitle: "To-dos",
+        todoCount: "2 completed · 1 in progress",
+        composerPlaceholder: "Message the agent…",
+        composerPlaceholderRunning: "Queue or steer prompt for the active run…",
+        btnCommands: "Commands",
+        btnPerm: "Write Access",
+        btnStop: "Stop",
+        approvalStrip: "Waiting for approval · Sensitive command",
+        approvalReason: "The agent requested to run database migrations modifying schema tables.",
+        approvalDraftNotice: "ℹ️ Your current draft has been safely preserved and will restore after approval.",
+        btnReject: "Reject",
+        btnAllow: "Allow once",
+        btnSubmitting: "Submitting…",
+        setupTitle: "Server Connection",
+        setupDesc: "Enter your Harness server address, or paste a fast launch link containing an access token.",
+        setupConnect: "Test & Connect",
+        tokenDetected: "✓ Fast launch link detected. Access credential will be safely exchanged and cleaned.",
+        setupVerifying: "Connecting to server…",
+        contextTitle: "18% of context used",
+        sysPrompt: "System prompt",
+        toolsUsage: "Tools",
+        msgsUsage: "Messages",
+        modelPickerTitle: "Select model (Host advertised roster)",
+        scrollAnchorNotice: "📌 Tap to simulate reading older history (tests keyboard scroll anchor)",
+        scrollAnchorTop: "Scrolled to middle history: opening keyboard will preserve your reading position"
+      }
+    };
+
+    function setTheme(theme) {
+      currentTheme = theme;
+      document.body.className = `theme-${theme}`;
+      document.getElementById('btn-theme-dark').classList.toggle('active', theme === 'dark');
+      document.getElementById('btn-theme-light').classList.toggle('active', theme === 'light');
+    }
+
+    function setLanguage(lang) {
+      currentLang = lang;
+      document.getElementById('btn-lang-zh').classList.toggle('active', lang === 'zh');
+      document.getElementById('btn-lang-en').classList.toggle('active', lang === 'en');
+      applyCopy();
+      renderModelPicker();
+    }
+
+    function applyCopy() {
+      const c = copyData[currentLang];
+      document.getElementById('txt-disclaimer').innerHTML = c.disclaimer;
+      document.getElementById('txt-session-title').textContent = c.sessionTitle;
+      document.getElementById('txt-user-prompt').textContent = c.userPrompt;
+      document.getElementById('txt-think-label').textContent = c.thinkLabel;
+      document.getElementById('txt-think-summary').textContent = c.thinkSummary;
+      document.getElementById('txt-tool-label').textContent = c.toolLabel;
+      document.getElementById('txt-tool-summary').textContent = c.toolSummary;
+      document.getElementById('txt-shimmer-msg').textContent = c.shimmerMsg;
+      document.getElementById('txt-todo-title').textContent = c.todoTitle;
+      document.getElementById('txt-todo-count').textContent = c.todoCount;
+      document.getElementById('txt-btn-commands').textContent = c.btnCommands;
+      document.getElementById('txt-btn-perm').textContent = c.btnPerm;
+      document.getElementById('txt-btn-stop').textContent = c.btnStop;
+      document.getElementById('txt-approval-strip-title').textContent = c.approvalStrip;
+      document.getElementById('txt-approval-reason').textContent = c.approvalReason;
+      document.getElementById('txt-approval-draft-notice').textContent = c.approvalDraftNotice;
+      document.getElementById('btn-approval-reject').textContent = c.btnReject;
+      document.getElementById('btn-approval-allow').textContent = c.btnAllow;
+      document.getElementById('txt-setup-title').textContent = c.setupTitle;
+      document.getElementById('txt-setup-desc').textContent = c.setupDesc;
+      document.getElementById('btn-connect-action').textContent = c.setupConnect;
+      document.getElementById('token-detected-hint').textContent = c.tokenDetected;
+      document.getElementById('txt-context-title').textContent = c.contextTitle;
+      document.getElementById('txt-sys-prompt').textContent = c.sysPrompt;
+      document.getElementById('txt-tools-usage').textContent = c.toolsUsage;
+      document.getElementById('txt-msgs-usage').textContent = c.msgsUsage;
+      document.getElementById('txt-model-picker-title').textContent = c.modelPickerTitle;
+      document.getElementById('scroll-anchor-pill').textContent = c.scrollAnchorNotice;
+      
+      updateComposerPlaceholder();
+      updateHeaderStatusText();
+      updateModelChipDisplay();
+    }
+
+    function updateComposerPlaceholder() {
+      const c = copyData[currentLang];
+      const composer = document.getElementById('composer-input');
+      composer.placeholder = isRunning ? c.composerPlaceholderRunning : c.composerPlaceholder;
+    }
+
+    function updateHeaderStatusText() {
+      const c = copyData[currentLang];
+      const txt = document.getElementById('txt-header-status');
+      if (currentScenario === 'connected') txt.textContent = c.statusConnected;
+      else if (currentScenario === 'running') txt.textContent = c.statusRunning;
+      else if (currentScenario === 'approval') txt.textContent = c.statusConnected;
+      else if (currentScenario === 'reconnecting') txt.textContent = c.statusReconnecting;
+      else if (currentScenario === 'auth-expired') txt.textContent = c.statusAuthExpired;
+      else if (currentScenario === 'cf-auth') txt.textContent = c.statusCfAuth;
+      else if (currentScenario === 'error-version') txt.textContent = c.statusFailed;
+      else if (currentScenario === 'setup') txt.textContent = c.statusUnconfigured;
+    }
+
+    function switchScenario(scenario) {
+      currentScenario = scenario;
+      closeModal('modal-server-setup');
+      hidePopups();
+
+      const banner = document.getElementById('status-banner');
+      const dot = document.getElementById('status-dot');
+      const runningRow = document.getElementById('running-indicator-row');
+      const approvalCard = document.getElementById('approval-card');
+      const normalComposer = document.getElementById('normal-composer');
+      const todoContainer = document.getElementById('todo-container');
+      const stopBtn = document.getElementById('btn-stop-action');
+      const composerInput = document.getElementById('composer-input');
+      const draftNotice = document.getElementById('txt-approval-draft-notice');
+      const c = copyData[currentLang];
+
+      // Defaults
+      banner.style.display = 'none';
+      runningRow.style.display = 'none';
+      approvalCard.style.display = 'none';
+      normalComposer.style.display = 'flex';
+      todoContainer.style.display = 'block';
+      stopBtn.style.display = 'none';
+      isRunning = false;
+
+      dot.className = 'status-indicator-dot';
+
+      switch (scenario) {
+        case 'connected':
+          dot.classList.add('status-dot-connected');
+          // If we had a preserved draft from approval card, restore it
+          if (preservedDraft) {
+            composerInput.value = preservedDraft;
+            handleComposerInput(composerInput);
+          }
+          break;
+
+        case 'running':
+          dot.classList.add('status-dot-running');
+          runningRow.style.display = 'flex';
+          stopBtn.style.display = 'flex';
+          isRunning = true;
+          // Composer remains fully usable to queue/steer prompt!
+          handleComposerInput(composerInput);
+          break;
+
+        case 'approval':
+          dot.classList.add('status-dot-connected');
+          // Preserve draft before hiding composer
+          preservedDraft = composerInput.value;
+          if (preservedDraft.trim().length > 0) {
+            draftNotice.style.display = 'block';
+          } else {
+            draftNotice.style.display = 'none';
+          }
+          normalComposer.style.display = 'none';
+          todoContainer.style.display = 'none';
+          approvalCard.style.display = 'flex';
+          // reset buttons
+          document.getElementById('btn-approval-reject').disabled = false;
+          document.getElementById('btn-approval-allow').disabled = false;
+          document.getElementById('btn-approval-reject').textContent = c.btnReject;
+          document.getElementById('btn-approval-allow').textContent = c.btnAllow;
+          break;
+
+        case 'reconnecting':
+          dot.classList.add('status-dot-reconnecting');
+          banner.className = 'banner-bar banner-reconnecting';
+          banner.style.display = 'flex';
+          document.getElementById('txt-banner-msg').textContent = c.bannerReconnecting;
+          break;
+
+        case 'auth-expired':
+          dot.classList.add('status-dot-failed');
+          banner.className = 'banner-bar banner-auth';
+          banner.style.display = 'flex';
+          document.getElementById('txt-banner-msg').textContent = c.bannerHarnessAuthExpired;
+          break;
+
+        case 'cf-auth':
+          dot.classList.add('status-dot-failed');
+          banner.className = 'banner-bar banner-auth';
+          banner.style.display = 'flex';
+          document.getElementById('txt-banner-msg').textContent = c.bannerCfAuth;
+          break;
+
+        case 'error-version':
+          dot.classList.add('status-dot-failed');
+          banner.className = 'banner-bar banner-error';
+          banner.style.display = 'flex';
+          document.getElementById('txt-banner-msg').textContent = c.bannerErrorVersion;
+          break;
+
+        case 'setup':
+          dot.classList.add('status-dot-unconfigured');
+          document.getElementById('modal-server-setup').style.display = 'flex';
+          break;
+      }
+
+      updateComposerPlaceholder();
+      updateHeaderStatusText();
+    }
+
+    function handleComposerInput(textarea) {
+      const sendBtn = document.getElementById('btn-main-action');
+      if (textarea.value.trim().length > 0) {
+        sendBtn.className = 'main-action-btn send-enabled';
+        sendBtn.title = isRunning ? (currentLang === 'zh' ? '向运行中任务插队/排队发送' : 'Queue prompt to active run') : (currentLang === 'zh' ? '发送' : 'Send');
+      } else {
+        sendBtn.className = 'main-action-btn send-disabled';
+      }
+    }
+
+    function handleMainActionClick() {
+      const input = document.getElementById('composer-input');
+      if (input.value.trim().length === 0) return;
+
+      const userText = input.value;
+      input.value = '';
+      preservedDraft = '';
+      handleComposerInput(input);
+
+      if (isRunning) {
+        // Queue/Steer during active run
+        showToast(currentLang === 'zh' ? '已排队插队发送指令至当前任务' : 'Prompt queued to active run');
+      } else {
+        // Normal send: switches to running and auto-follows to bottom
+        showToast(currentLang === 'zh' ? '正在发送消息…' : 'Sending prompt…');
+        switchScenario('running');
+        document.getElementById('scenario-selector').value = 'running';
+      }
+
+      // Explicit send always auto-follows bottom
+      scrollChatToBottom();
+    }
+
+    function handleStopRun() {
+      showToast(currentLang === 'zh' ? '已停止当前任务' : 'Task stopped');
+      switchScenario('connected');
+      document.getElementById('scenario-selector').value = 'connected';
+    }
+
+    function handleApprovalOutcome(outcome) {
+      const c = copyData[currentLang];
+      const btnReject = document.getElementById('btn-approval-reject');
+      const btnAllow = document.getElementById('btn-approval-allow');
+      btnReject.disabled = true;
+      btnAllow.disabled = true;
+
+      if (outcome === 'allowed') {
+        btnAllow.textContent = c.btnSubmitting;
+        showToast(currentLang === 'zh' ? '已批准操作，任务继续执行' : 'Approval granted. Continuing task…');
+      } else {
+        btnReject.textContent = c.btnSubmitting;
+        showToast(currentLang === 'zh' ? '已拒绝该操作' : 'Approval rejected.');
+      }
+
+      setTimeout(() => {
+        // Return to running scenario and restore draft!
+        switchScenario('running');
+        document.getElementById('scenario-selector').value = 'running';
+        if (preservedDraft) {
+          const input = document.getElementById('composer-input');
+          input.value = preservedDraft;
+          handleComposerInput(input);
+          showToast(currentLang === 'zh' ? '已恢复您之前的输入草稿' : 'Previous input draft restored');
+        }
+      }, 850);
+    }
+
+    /* Scroll Anchor and Keyboard Policy */
+    function handleUserScroll() {
+      const chat = document.getElementById('chat-messages');
+      const distanceFromBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight;
+      isNearBottom = distanceFromBottom <= 56;
+    }
+
+    function simulateReadOldMessage() {
+      const chat = document.getElementById('chat-messages');
+      chat.scrollTop = 40;
+      isNearBottom = false;
+      showToast(copyData[currentLang].scrollAnchorTop);
+    }
+
+    function scrollChatToBottom() {
+      const chat = document.getElementById('chat-messages');
+      chat.scrollTop = chat.scrollHeight;
+      isNearBottom = true;
+    }
+
+    function toggleKeyboard() {
+      isKeyboardUp = !isKeyboardUp;
+      const kb = document.getElementById('keyboard-view');
+      const chat = document.getElementById('chat-messages');
+      const previousScrollTop = chat.scrollTop;
+
+      kb.style.display = isKeyboardUp ? 'flex' : 'none';
+      document.getElementById('btn-toggle-keyboard').style.background = isKeyboardUp ? '#38BDF8' : '';
+      document.getElementById('btn-toggle-keyboard').style.color = isKeyboardUp ? '#0F172A' : '';
+
+      if (isKeyboardUp) {
+        // Requirement 3: Preserve user reading position unless already near bottom
+        if (isNearBottom) {
+          setTimeout(() => { scrollChatToBottom(); }, 50);
+          document.getElementById('txt-kb-anchor-status').textContent = currentLang === 'zh' 
+            ? '当前处于对话底部：自动跟随最新消息' 
+            : 'Already at bottom: auto-following newest message';
+        } else {
+          // Restore exact scroll position to preserve reading anchor
+          setTimeout(() => { chat.scrollTop = previousScrollTop; }, 50);
+          document.getElementById('txt-kb-anchor-status').textContent = currentLang === 'zh'
+            ? '正在阅读旧历史：严格保持当前阅读锚点，不强制滚到底部'
+            : 'Reading older history: strictly preserving reading anchor without jump';
+          showToast(currentLang === 'zh' ? '键盘已升起，保持当前阅读锚点' : 'Keyboard opened; reading anchor preserved');
+        }
+      }
+    }
+
+    /* Model Picker with Host-Advertised Efforts (Requirement 4) */
+    function renderModelPicker() {
+      const container = document.getElementById('model-options-list');
+      container.innerHTML = '';
+
+      hostModels.forEach(model => {
+        const isModelSelected = model.id === selectedModel.id;
+        const row = document.createElement('div');
+        row.className = `menu-item-row ${isModelSelected ? 'selected' : ''}`;
+        
+        let effortBadge = '';
+        if (isModelSelected && selectedEffortKey) {
+          const effortObj = model.efforts.find(e => e.key === selectedEffortKey);
+          if (effortObj) {
+            const label = currentLang === 'zh' ? effortObj.labelZh : effortObj.labelEn;
+            effortBadge = `<span style="font-size:11px; background:var(--app-control); padding:2px 6px; border-radius:6px;">${label}</span>`;
+          }
+        }
+
+        row.innerHTML = `<span>${model.name}</span>${effortBadge}`;
+        row.onclick = () => { selectModel(model); };
+        container.appendChild(row);
+
+        // If this model is currently selected and advertises efforts, render host roster efforts
+        if (isModelSelected && model.efforts.length > 0) {
+          const subBox = document.createElement('div');
+          subBox.className = 'effort-roster-box';
+          
+          model.efforts.forEach(eff => {
+            const isEffSelected = eff.key === selectedEffortKey;
+            const effRow = document.createElement('div');
+            effRow.className = `menu-item-row ${isEffSelected ? 'selected' : ''}`;
+            effRow.style.paddingLeft = '24px';
+            effRow.style.minHeight = '36px';
+            effRow.style.fontSize = '12px';
+            
+            const effLabel = currentLang === 'zh' ? eff.labelZh : eff.labelEn;
+            effRow.innerHTML = `<span>↳ 思考强度: ${effLabel}</span><span>${isEffSelected ? '✓' : ''}</span>`;
+            effRow.onclick = (e) => {
+              e.stopPropagation();
+              selectEffort(eff.key);
+            };
+            subBox.appendChild(effRow);
+          });
+          container.appendChild(subBox);
+        }
+      });
+    }
+
+    function selectModel(model) {
+      selectedModel = model;
+      selectedEffortKey = model.defaultEffort;
+      updateModelChipDisplay();
+      renderModelPicker();
+      showToast((currentLang === 'zh' ? '已选择模型: ' : 'Selected model: ') + model.name);
+    }
+
+    function selectEffort(effortKey) {
+      selectedEffortKey = effortKey;
+      updateModelChipDisplay();
+      renderModelPicker();
+      document.getElementById('model-popup').style.display = 'none';
+      const eff = selectedModel.efforts.find(e => e.key === effortKey);
+      const label = eff ? (currentLang === 'zh' ? eff.labelZh : eff.labelEn) : effortKey;
+      showToast((currentLang === 'zh' ? '已设定思考强度为: ' : 'Effort set to: ') + label);
+    }
+
+    function updateModelChipDisplay() {
+      let text = selectedModel.name;
+      if (selectedEffortKey && selectedModel.efforts.length > 0) {
+        const eff = selectedModel.efforts.find(e => e.key === selectedEffortKey);
+        if (eff) {
+          const effLabel = currentLang === 'zh' ? eff.labelZh : eff.labelEn;
+          text += ` · ${effLabel}`;
+        }
+      }
+      document.getElementById('txt-current-model').textContent = text;
+    }
+
+    function toggleModelPopup() {
+      const p = document.getElementById('model-popup');
+      const isVisible = p.style.display !== 'none';
+      p.style.display = isVisible ? 'none' : 'flex';
+      document.getElementById('context-popup').style.display = 'none';
+      if (!isVisible) renderModelPicker();
+    }
+
+    function toggleContextPopup() {
+      const p = document.getElementById('context-popup');
+      p.style.display = p.style.display === 'none' ? 'flex' : 'none';
+      document.getElementById('model-popup').style.display = 'none';
+    }
+
+    function hidePopups() {
+      document.getElementById('context-popup').style.display = 'none';
+      document.getElementById('model-popup').style.display = 'none';
+    }
+
+    function toggleActivity(id) {
+      const el = document.getElementById(id);
+      const isVisible = el.style.display !== 'none';
+      el.style.display = isVisible ? 'none' : 'block';
+      const chevron = id === 'think-details' ? document.getElementById('chevron-think') : document.getElementById('chevron-tool');
+      chevron.textContent = isVisible ? '▶' : '▼';
+    }
+
+    function toggleTodos() {
+      const list = document.getElementById('todo-expanded-list');
+      const isVisible = list.style.display !== 'none';
+      list.style.display = isVisible ? 'none' : 'flex';
+      document.getElementById('todo-chevron').textContent = isVisible ? '▼' : '▲';
+    }
+
+    function toggleA11yGuide() {
+      isA11yActive = !isA11yActive;
+      const targets = document.querySelectorAll('.icon-touch-btn, .pill-chip, .main-action-btn, .btn-approval-reject, .btn-approval-allow, .context-pill, .stop-run-btn');
+      targets.forEach(t => t.classList.toggle('touch-target-indicator', isA11yActive));
+      document.getElementById('btn-toggle-a11y').style.background = isA11yActive ? '#F43F5E' : '';
+      document.getElementById('btn-toggle-a11y').style.color = isA11yActive ? '#FFFFFF' : '';
+    }
+
+    function checkSetupInput(val) {
+      const hint = document.getElementById('token-detected-hint');
+      if (val.includes('token=')) {
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+    }
+
+    function submitServerConnect() {
+      const btn = document.getElementById('btn-connect-action');
+      const c = copyData[currentLang];
+      btn.disabled = true;
+      btn.textContent = c.setupVerifying;
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = c.setupConnect;
+        closeModal('modal-server-setup');
+        showToast(currentLang === 'zh' ? '连接成功！凭据已建立' : 'Connected! Session established.');
+        switchScenario('connected');
+        document.getElementById('scenario-selector').value = 'connected';
+      }, 900);
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).style.display = 'none';
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast-message');
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        toast.style.display = 'none';
+      }, 2400);
+    }
+
+    // Initialize
+    applyCopy();
+    renderModelPicker();
+  </script>
+</body>
+</html>

@@ -1,0 +1,1661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Harness - Private Server Pairing Preview (原生 Android 交互原型)</title>
+  <style>
+    :root {
+      --font-scale: 1;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      
+      /* Dark Theme (Default) - DeepSeek Blue/Black brand */
+      --bg-page: #0d0f12;
+      --bg-canvas: #000000;
+      --bg-card: #18181A;
+      --bg-input: #212121;
+      --text-primary: #F4F4F4;
+      --text-muted: #ABABAB;
+      --brand-blue: #528BFF;
+      --brand-blue-hover: #3d79f5;
+      --brand-blue-subtle: rgba(82, 139, 255, 0.15);
+      --border-color: #3E3E3E;
+      --border-subtle: #2A2A2D;
+      --success-green: #5BCF8B;
+      --success-bg: rgba(91, 207, 139, 0.12);
+      --warning-amber: #FBBF24;
+      --warning-bg: #272318;
+      --error-red: #F87171;
+      --error-bg: #2A1616;
+      --shadow-dialog: 0 16px 40px rgba(0, 0, 0, 0.7);
+      --status-bar-bg: #000000;
+    }
+
+    body.theme-light {
+      --bg-page: #e9ecef;
+      --bg-canvas: #FFFFFF;
+      --bg-card: #F8FAFC;
+      --bg-input: #FFFFFF;
+      --text-primary: #0F1115;
+      --text-muted: #61666B;
+      --brand-blue: #4176E6;
+      --brand-blue-hover: #3164d1;
+      --brand-blue-subtle: rgba(65, 118, 230, 0.12);
+      --border-color: #CFD3D6;
+      --border-subtle: #EBEFF2;
+      --success-green: #22C55E;
+      --success-bg: #EAF9EE;
+      --warning-amber: #F59E0B;
+      --warning-bg: #FEF5E7;
+      --error-red: #EC1313;
+      --error-bg: #FEECEB;
+      --shadow-dialog: 0 16px 40px rgba(0, 0, 0, 0.18);
+      --status-bar-bg: #FFFFFF;
+    }
+
+    body.font-150 {
+      --font-scale: 1.5;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg-page);
+      font-family: var(--font-family);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px 12px 48px;
+    }
+
+    /* Top Control Deck (Prototype Tester Bar) */
+    .tester-toolbar {
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    }
+
+    .tester-toolbar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .tester-toolbar-header .badge {
+      background: var(--brand-blue-subtle);
+      color: var(--brand-blue);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+    }
+
+    .tester-controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .control-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .control-item label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .control-item select, .control-item button {
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .control-item select:focus, .control-item button:hover {
+      border-color: var(--brand-blue);
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+    }
+
+    .btn-quick {
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      color: var(--brand-blue);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-quick:hover {
+      background: var(--brand-blue-subtle);
+      border-color: var(--brand-blue);
+    }
+
+    /* Device Viewport Simulation */
+    .device-viewport-wrapper {
+      position: relative;
+      transition: max-width 0.25s ease;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+    }
+
+    .device-viewport-wrapper.w-360 { max-width: 360px; }
+    .device-viewport-wrapper.w-411 { max-width: 411px; }
+    .device-viewport-wrapper.w-fluid { max-width: 500px; }
+
+    .device-frame {
+      width: 100%;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-color);
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 20px 48px rgba(0,0,0,0.5);
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 740px;
+    }
+
+    /* Android System Status Bar */
+    .status-bar {
+      height: 32px;
+      background: var(--status-bar-bg);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      user-select: none;
+    }
+
+    .status-bar-icons {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-bar-icons svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
+
+    /* Top App Bar */
+    .top-app-bar {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px 0 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-canvas);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .app-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .app-title {
+      font-size: calc(16px * var(--font-scale));
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .app-subtitle {
+      font-size: calc(11px * var(--font-scale));
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .status-dot.idle { background-color: var(--text-muted); }
+    .status-dot.pairing { background-color: var(--brand-blue); animation: pulse 1.2s infinite ease-in-out; }
+    .status-dot.connected { background-color: var(--success-green); }
+    .status-dot.needs-pairing { background-color: var(--warning-amber); }
+    .status-dot.network-unavailable { background-color: var(--error-red); }
+    .status-dot.upstream-unavailable { background-color: var(--warning-amber); }
+
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.6; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.6; }
+    }
+
+    .icon-button {
+      width: 48px;
+      height: 48px;
+      border-radius: 24px;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: relative;
+    }
+    .icon-button:hover {
+      background: var(--brand-blue-subtle);
+    }
+    .icon-button svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    /* Main Scrollable Canvas */
+    .app-scroll-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Connection Card / Dialog Container */
+    .connection-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .panel-title {
+      font-size: calc(18px * var(--font-scale));
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    /* Segmented Mode Selector (Material 3 Toggle Group) */
+    .mode-toggle-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 3px;
+      gap: 4px;
+    }
+
+    .mode-tab-button {
+      min-height: 44px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: calc(13px * var(--font-scale));
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 6px 10px;
+      transition: all 0.15s ease;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .mode-tab-button.active {
+      background: var(--brand-blue);
+      color: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .mode-tab-button svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+      flex-shrink: 0;
+    }
+
+    /* Informational Hints */
+    .info-callout {
+      font-size: calc(12px * var(--font-scale));
+      color: var(--text-muted);
+      line-height: 1.45;
+      padding: 2px 2px;
+    }
+
+    /* Text Input Layouts (Android TextInputLayout style) */
+    .input-field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field-label {
+      font-size: calc(12px * var(--font-scale));
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .field-badge {
+      font-size: 10px;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--border-subtle);
+      color: var(--text-muted);
+    }
+
+    .text-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .text-input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: calc(14px * var(--font-scale));
+      color: var(--text-primary);
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .text-input:focus {
+      border-color: var(--brand-blue);
+      box-shadow: 0 0 0 2px var(--brand-blue-subtle);
+    }
+
+    .text-input:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .text-input.code-font {
+      font-family: var(--font-mono);
+      font-size: calc(12px * var(--font-scale));
+      line-height: 1.4;
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .password-toggle-btn {
+      position: absolute;
+      right: 8px;
+      width: 36px;
+      height: 36px;
+      border-radius: 18px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .password-toggle-btn:hover {
+      color: var(--text-primary);
+    }
+    .password-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    .field-helper {
+      font-size: calc(11px * var(--font-scale));
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+    .field-helper.valid {
+      color: var(--success-green);
+    }
+    .field-helper.invalid {
+      color: var(--error-red);
+    }
+
+    /* State Indicator Banner */
+    .status-banner {
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: calc(12.5px * var(--font-scale));
+      line-height: 1.4;
+    }
+    .status-banner.amber {
+      background: var(--warning-bg);
+      border: 1px solid var(--warning-amber);
+      color: var(--warning-amber);
+    }
+    .status-banner.red {
+      background: var(--error-bg);
+      border: 1px solid var(--error-red);
+      color: var(--error-red);
+    }
+    .status-banner.green {
+      background: var(--success-bg);
+      border: 1px solid var(--success-green);
+      color: var(--success-green);
+    }
+    .status-banner svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .status-banner-content {
+      flex: 1;
+    }
+    .status-banner-title {
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    /* Saved Connection Card (Connected state) - Neutral & Clean */
+    .saved-conn-card {
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .saved-conn-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .saved-conn-title {
+      font-size: calc(14px * var(--font-scale));
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .saved-conn-details {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      font-size: calc(12px * var(--font-scale));
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+    }
+
+    .detail-value {
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: calc(11.5px * var(--font-scale));
+    }
+
+    /* Buttons */
+    .button-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn {
+      min-height: 48px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: calc(14px * var(--font-scale));
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-family: inherit;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+      flex: 1;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--brand-blue);
+      color: #FFFFFF;
+    }
+    .btn-primary:hover {
+      background: var(--brand-blue-hover);
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-outline {
+      background: transparent;
+      border-color: var(--border-color);
+      color: var(--text-primary);
+    }
+    .btn-outline:hover {
+      background: var(--border-subtle);
+    }
+
+    .btn-danger-outline {
+      background: transparent;
+      border-color: var(--error-red);
+      color: var(--error-red);
+    }
+    .btn-danger-outline:hover {
+      background: var(--error-bg);
+    }
+
+    /* Spinner Animation */
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #FFFFFF;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Android Navigation Bar Simulation */
+    .android-nav-bar {
+      height: 36px;
+      background: var(--bg-canvas);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+    }
+
+    .nav-pill {
+      width: 72px;
+      height: 4px;
+      background: var(--text-muted);
+      opacity: 0.5;
+      border-radius: 2px;
+    }
+
+    /* Dropdown Overflow Menu */
+    .overflow-menu-dropdown {
+      position: absolute;
+      top: 56px;
+      right: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+      min-width: 180px;
+      padding: 6px;
+      z-index: 50;
+      display: none;
+    }
+    .overflow-menu-dropdown.show {
+      display: block;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      font-size: calc(13px * var(--font-scale));
+      color: var(--text-primary);
+      border-radius: 8px;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      width: 100%;
+      text-align: left;
+    }
+    .menu-item:hover {
+      background: var(--brand-blue-subtle);
+      color: var(--brand-blue);
+    }
+    .menu-item.muted {
+      color: var(--text-muted);
+    }
+    .menu-item svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
+
+    /* Android Modal Dialog Backdrop */
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .modal-backdrop.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .dialog-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      padding: 20px;
+      max-width: 320px;
+      width: 100%;
+      box-shadow: var(--shadow-dialog);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      animation: dialogPop 0.2s ease;
+    }
+
+    @keyframes dialogPop {
+      from { transform: scale(0.92); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .dialog-title {
+      font-size: calc(17px * var(--font-scale));
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .dialog-body {
+      font-size: calc(13px * var(--font-scale));
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .dialog-btn {
+      background: transparent;
+      border: none;
+      color: var(--brand-blue);
+      font-size: calc(13.5px * var(--font-scale));
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .dialog-btn.danger {
+      color: var(--error-red);
+    }
+    .dialog-btn.cancel {
+      color: var(--text-muted);
+    }
+    .dialog-btn:hover {
+      background: var(--brand-blue-subtle);
+    }
+    .dialog-btn.danger:hover {
+      background: var(--error-bg);
+    }
+
+    /* Floating Toast Notification */
+    .toast-msg {
+      position: absolute;
+      bottom: 48px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #252830;
+      color: #FFFFFF;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      opacity: 0;
+      transition: all 0.25s ease;
+      pointer-events: none;
+      z-index: 120;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .toast-msg.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Synthetic Data Badge */
+    .mock-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--border-subtle);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body class="theme-dark">
+
+  <!-- Top Tester / Demonstration Toolbar -->
+  <header class="tester-toolbar" role="region" aria-label="原型控制面板">
+    <div class="tester-toolbar-header">
+      <span>Android Views / Material UI 状态预览控制器</span>
+      <span class="badge">纯合成数据 · 无外部依赖 · 零网络请求</span>
+    </div>
+
+    <div class="tester-controls-grid">
+      <!-- 1. State Selector -->
+      <div class="control-item">
+        <label for="stateSelector">目标状态 (State)</label>
+        <select id="stateSelector" aria-label="选择要模拟的连接状态">
+          <option value="Idle">1. Idle (空闲 / 未连接)</option>
+          <option value="Pairing">2. Pairing (正在配对…)</option>
+          <option value="Connected">3. Connected (已安全连接)</option>
+          <option value="NeedsPairing">4. NeedsPairing (凭据已失效)</option>
+          <option value="NetworkUnavailable">5. NetworkUnavailable (网络不可用)</option>
+          <option value="UpstreamUnavailable">6. UpstreamUnavailable (后端未就绪)</option>
+          <option value="Direct">直接连接模式 (Direct Mode)</option>
+        </select>
+      </div>
+
+      <!-- 2. Theme Toggle -->
+      <div class="control-item">
+        <label for="themeSelector">界面主题 (DayNight Theme)</label>
+        <select id="themeSelector" aria-label="切换浅色或深色主题">
+          <option value="dark">深色模式 (Dark / OLED Black)</option>
+          <option value="light">浅色模式 (Light / Material Surface)</option>
+        </select>
+      </div>
+
+      <!-- 3. Language Selector -->
+      <div class="control-item">
+        <label for="langSelector">显示语言 (Language)</label>
+        <select id="langSelector" aria-label="切换界面语言">
+          <option value="zh">简体中文 (Chinese)</option>
+          <option value="en">English (US)</option>
+        </select>
+      </div>
+
+      <!-- 4. Font Scaling (150% dynamic type test) -->
+      <div class="control-item">
+        <label for="fontSelector">字号缩放 (Dynamic Font Scale)</label>
+        <select id="fontSelector" aria-label="测试150%系统大字号排版">
+          <option value="100">标准字号 (100% Normal)</option>
+          <option value="150">大字号 (150% Accessibility Large)</option>
+        </select>
+      </div>
+
+      <!-- 5. Viewport Width -->
+      <div class="control-item">
+        <label for="viewportSelector">设备视口 (Screen Viewport)</label>
+        <select id="viewportSelector" aria-label="切换模拟屏幕宽度">
+          <option value="411">411dp (主流紧凑型手机 Pixel 7/8/10)</option>
+          <option value="360">360dp (超窄屏小型机)</option>
+          <option value="fluid">自适应铺满 (Fluid Width)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="toolbar-actions">
+      <button type="button" class="btn-quick" id="btnFillSample" title="填入合成模拟配置">
+        <span class="icon">⚡</span> <span data-i18n="fill_sample_btn">填入示例配置 JSON</span>
+      </button>
+      <button type="button" class="btn-quick" id="btnShowWebNotice" title="触发本地 Web 功能限制说明">
+        <span class="icon">ⓘ</span> <span data-i18n="test_web_notice_btn">测试 Web 限制说明</span>
+      </button>
+      <button type="button" class="btn-quick" id="btnTriggerForget" title="测试清除此连接">
+        <span class="icon">🗑</span> <span data-i18n="test_forget_btn">测试“清除连接”确认弹窗</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Android Device Simulation Container -->
+  <main class="device-viewport-wrapper w-411" id="deviceViewport">
+    <div class="device-frame" role="region" aria-label="Android 设备预览界面">
+      
+      <!-- Android System Status Bar -->
+      <div class="status-bar" aria-hidden="true">
+        <span>09:41</span>
+        <div class="status-bar-icons">
+          <!-- WiFi SVG -->
+          <svg viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98A16.88 16.88 0 0 0 12 4zm0 2.9c3.8 0 7.23 1.54 9.74 4.04L12 18.78 2.26 10.94C4.77 8.44 8.2 6.9 12 6.9z"/></svg>
+          <!-- Cell Signal SVG -->
+          <svg viewBox="0 0 24 24"><path d="M2 22h20V2z"/></svg>
+          <!-- Battery SVG -->
+          <svg viewBox="0 0 24 24"><path d="M17 5v16c0 .55-.45 1-1 1H8c-.55 0-1-.45-1-1V5c0-.55.45-1 1-1h2V2h4v2h2c.55 0 1 .45 1 1z"/></svg>
+        </div>
+      </div>
+
+      <!-- App Top Bar -->
+      <div class="top-app-bar">
+        <div class="app-title-group">
+          <span class="app-title" data-i18n="app_title">DeepSeek Harness</span>
+          <span class="app-subtitle" id="topStatusSubtitle">
+            <span class="status-dot idle" id="topStatusDot"></span>
+            <span id="topStatusLabel" data-i18n="status_idle">未连接</span>
+          </span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 2px;">
+          <!-- Overflow Menu Button (48dp touch) -->
+          <button type="button" class="icon-button" id="btnOverflowMenu" aria-label="更多操作" aria-haspopup="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+        </div>
+
+        <!-- Overflow Dropdown Menu -->
+        <div class="overflow-menu-dropdown" id="overflowDropdown" role="menu">
+          <button type="button" class="menu-item" id="menuItemNewSession">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            <span data-i18n="menu_new_session">新建会话</span>
+          </button>
+          <button type="button" class="menu-item" id="menuItemRefresh">
+            <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            <span data-i18n="menu_refresh">刷新连接</span>
+          </button>
+          <button type="button" class="menu-item" id="menuItemOpenWeb">
+            <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+            <span data-i18n="menu_open_web">在浏览器中打开</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- App Main Scrollable Content -->
+      <div class="app-scroll-content">
+        
+        <!-- Connection Setup Dialog/Card Container -->
+        <section class="connection-panel" role="region" aria-labelledby="dialogTitle">
+          <div class="panel-header">
+            <h2 class="panel-title" id="dialogTitle" data-i18n="title_server_connection">服务器连接</h2>
+            <span class="mock-badge" id="modeBadge">私有服务</span>
+          </div>
+
+          <!-- Dual Mode Switcher (Segmented Button) -->
+          <div class="mode-toggle-group" role="tablist" aria-label="连接模式切换">
+            <button type="button" class="mode-tab-button active" id="tabPrivateServer" role="tab" aria-selected="true" data-mode="private">
+              <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+              <span data-i18n="mode_private_server">私有服务 (通信壳)</span>
+            </button>
+            <button type="button" class="mode-tab-button" id="tabDirect" role="tab" aria-selected="false" data-mode="direct">
+              <svg viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+              <span data-i18n="mode_direct">直接连接</span>
+            </button>
+          </div>
+
+          <!-- Container A: Private Server Mode Content -->
+          <div id="privateModeContainer" style="display: flex; flex-direction: column; gap: 14px;">
+            <p class="info-callout" data-i18n="private_intro">
+              公网环境请使用通信壳安全配对。请输入由服务端生成的非敏感连接配置，并单独填入短期高熵配对码。
+            </p>
+
+            <!-- State Banner (Shows dynamically for NeedsPairing, NetworkUnavailable, UpstreamUnavailable) -->
+            <div id="statusBannerBox" style="display: none;">
+              <!-- Inserted via JS -->
+            </div>
+
+            <!-- Connected Summary Card (Neutral copy, no raw token row) -->
+            <div id="connectedCardBox" style="display: none;">
+              <div class="saved-conn-card">
+                <div class="saved-conn-header">
+                  <div class="saved-conn-title">
+                    <span class="status-dot connected"></span>
+                    <span data-i18n="status_connected">已安全连接</span>
+                  </div>
+                  <span class="field-badge" data-i18n="badge_protocol_v1">协议 v1</span>
+                </div>
+                <div class="saved-conn-details">
+                  <div class="detail-row">
+                    <span data-i18n="label_server_origin">服务器地址</span>
+                    <span class="detail-value" id="displayOrigin">https://harness.example.com</span>
+                  </div>
+                  <div class="detail-row">
+                    <span data-i18n="label_bound_device">绑定设备</span>
+                    <span class="detail-value" id="displayDevice">Pixel 10</span>
+                  </div>
+                  <div class="detail-row">
+                    <span data-i18n="label_credentials_status">凭据状态</span>
+                    <span class="detail-value" style="color: var(--success-green);" data-i18n="val_credentials_saved">访问凭据已安全保存</span>
+                  </div>
+                </div>
+                
+                <div class="button-row" style="margin-top: 6px;">
+                  <button type="button" class="btn btn-outline" id="btnTestPing" style="font-size: 13px;">
+                    <span data-i18n="btn_test_ping">测试通信连通性</span>
+                  </button>
+                  <button type="button" class="btn btn-danger-outline" id="btnForgetConnection" style="font-size: 13px;">
+                    <span data-i18n="btn_forget_connection">清除此连接</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Pairing Inputs Form (Active in Idle, Pairing, NeedsPairing, Errors) -->
+            <div id="pairingFormBox" style="display: flex; flex-direction: column; gap: 14px;">
+              <!-- 1. Nonsecret Connection JSON -->
+              <div class="input-field-group">
+                <div class="field-label">
+                  <label for="jsonInput" data-i18n="field_json_label">连接配置 JSON</label>
+                  <span class="field-badge" data-i18n="field_json_badge">非敏感参数</span>
+                </div>
+                <div class="text-input-wrapper">
+                  <textarea id="jsonInput" class="text-input code-font" spellcheck="false"
+                    placeholder='{"protocolVersion":1,"origin":"https://harness.example.com","pairPath":"/Q9w2aX8mN4b/T6pR1yK3cH0"}'
+                    aria-describedby="jsonFeedback"></textarea>
+                </div>
+                <div class="field-helper" id="jsonFeedback" data-i18n="field_json_hint">
+                  包含 protocolVersion、origin 和 pairPath。公网必须使用 HTTPS。
+                </div>
+              </div>
+
+              <!-- 2. Separately Masked One-time Pairing Code -->
+              <div class="input-field-group">
+                <div class="field-label">
+                  <label for="pairingCodeInput" data-i18n="field_code_label">一次性配对码</label>
+                  <span class="field-badge" style="color: var(--warning-amber);" data-i18n="badge_10min">10 分钟时效</span>
+                </div>
+                <div class="text-input-wrapper">
+                  <input type="password" id="pairingCodeInput" class="text-input" autocomplete="off"
+                    placeholder="输入电脑控制台生成的一次性配对码" aria-describedby="codeFeedback">
+                  <button type="button" class="password-toggle-btn" id="btnToggleMask" aria-label="切换配对码可见性">
+                    <!-- Eye SVG -->
+                    <svg id="eyeIcon" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                  </button>
+                </div>
+                <div class="field-helper" id="codeFeedback" data-i18n="field_code_hint">
+                  由服务端命令生成的高熵随机凭据，单次兑换作废；配对成功后清空输入框，且不持久化保存配对码。
+                </div>
+              </div>
+
+              <!-- 3. Device Name -->
+              <div class="input-field-group">
+                <div class="field-label">
+                  <label for="deviceNameInput" data-i18n="field_device_label">设备名称</label>
+                  <span class="field-badge" data-i18n="field_device_badge">用于服务端识别</span>
+                </div>
+                <div class="text-input-wrapper">
+                  <input type="text" id="deviceNameInput" class="text-input" value="Pixel 10" maxlength="80">
+                </div>
+                <div class="field-helper" data-i18n="field_device_hint">
+                  在服务端设备列表中显示的标识名称，支持 1~80 个字符。
+                </div>
+              </div>
+
+              <!-- Main Action Button -->
+              <div class="button-row" style="margin-top: 6px;">
+                <button type="button" class="btn btn-primary" id="btnPrimaryPairAction">
+                  <span id="spinnerIcon" class="spinner" style="display: none;"></span>
+                  <span id="btnPrimaryActionText" data-i18n="btn_pair_and_connect">配对并连接</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Container B: Direct Mode Content -->
+          <div id="directModeContainer" style="display: none; flex-direction: column; gap: 14px;">
+            <p class="info-callout" data-i18n="direct_intro">
+              适配 dsh 0.2.0-rc.2 原生直连。输入服务器地址或 dsh 登录链接。公网域名必须使用 HTTPS。
+            </p>
+
+            <div class="input-field-group">
+              <div class="field-label">
+                <label for="directAddressInput" data-i18n="field_direct_label">服务器地址或 dsh 登录链接</label>
+              </div>
+              <div class="text-input-wrapper">
+                <input type="text" id="directAddressInput" class="text-input"
+                  placeholder="https://harness.example.com 或 http://192.168.1.50:3000">
+              </div>
+              <div class="field-helper" data-i18n="field_direct_hint">
+                输入服务器地址，或粘贴 dsh 提供的 dsh 登录链接。公网地址必须使用 HTTPS；HTTP 仅允许私有内网地址。
+              </div>
+            </div>
+
+            <div class="button-row" style="margin-top: 6px;">
+              <button type="button" class="btn btn-outline" id="btnConnectionList">
+                <span data-i18n="btn_connection_list">连接列表</span>
+              </button>
+              <button type="button" class="btn btn-primary" id="btnDirectConnect">
+                <span data-i18n="btn_test_and_connect">测试并连接</span>
+              </button>
+            </div>
+          </div>
+
+        </section>
+
+      </div>
+
+      <!-- Android Navigation Bar (Home indicator) -->
+      <div class="android-nav-bar" aria-hidden="true">
+        <div class="nav-pill"></div>
+      </div>
+
+      <!-- Modal Dialog 1: Forget Connection Confirmation -->
+      <div class="modal-backdrop" id="modalForgetConfirm" role="dialog" aria-modal="true" aria-labelledby="forgetDialogTitle">
+        <div class="dialog-card">
+          <h3 class="dialog-title" id="forgetDialogTitle" data-i18n="dialog_forget_title">确认清除此连接？</h3>
+          <p class="dialog-body" data-i18n="dialog_forget_message">
+            确认清除此连接？将从本设备中移除已保存的访问凭据并断开连接。下次连接需要重新配对。
+          </p>
+          <div class="dialog-actions">
+            <button type="button" class="dialog-btn cancel" id="btnCancelForget" data-i18n="btn_cancel">取消</button>
+            <button type="button" class="dialog-btn danger" id="btnConfirmForget" data-i18n="btn_confirm_forget">确认清除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Dialog 2: Local Web Feature Notice -->
+      <div class="modal-backdrop" id="modalWebNotice" role="dialog" aria-modal="true" aria-labelledby="webNoticeTitle">
+        <div class="dialog-card">
+          <h3 class="dialog-title" id="webNoticeTitle" data-i18n="notice_web_title">Web 管理功能说明</h3>
+          <p class="dialog-body" data-i18n="notice_web_body">
+            出于安全防护考虑，私有服务模式不向公网开放 Web 页面。如需使用完整 Web 管理后台、插件管理或开发者设置，请直接在运行服务的电脑本地浏览器中访问。
+          </p>
+          <div class="dialog-actions">
+            <button type="button" class="dialog-btn" id="btnCloseWebNotice" data-i18n="btn_got_it">知道了</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Dialog 3: Connection List (Direct Mode) -->
+      <div class="modal-backdrop" id="modalConnectionList" role="dialog" aria-modal="true" aria-labelledby="connListTitle">
+        <div class="dialog-card">
+          <h3 class="dialog-title" id="connListTitle" data-i18n="title_conn_list">已保存的直连地址</h3>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="background: var(--bg-input); padding: 8px 10px; border-radius: 8px; font-size: 12px; border: 1px solid var(--border-color);">
+              <div style="font-weight: 600;">http://192.168.1.50:3000</div>
+              <div style="color: var(--text-muted); font-size: 11px;">局域网开发机</div>
+            </div>
+            <div style="background: var(--bg-input); padding: 8px 10px; border-radius: 8px; font-size: 12px; border: 1px solid var(--border-color);">
+              <div style="font-weight: 600;">http://127.0.0.1:3080</div>
+              <div style="color: var(--text-muted); font-size: 11px;">USB 反向代理</div>
+            </div>
+          </div>
+          <div class="dialog-actions">
+            <button type="button" class="dialog-btn cancel" id="btnCloseConnList" data-i18n="btn_cancel">关闭</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast Feedback -->
+      <div class="toast-msg" id="toastMessage" role="status" aria-live="polite">已复制配置</div>
+
+    </div>
+  </main>
+
+  <script>
+    /* Synthetic Mock Data with 11-char Base64URL Segments & Bilingual Dictionary */
+    const I18N = {
+      zh: {
+        app_title: "DeepSeek Harness",
+        title_server_connection: "服务器连接",
+        mode_private_server: "私有服务 (通信壳)",
+        mode_direct: "直接连接",
+        private_intro: "公网环境请使用通信壳安全配对。请输入由服务端生成的非敏感连接配置，并单独填入短期高熵配对码。",
+        direct_intro: "适配 dsh 0.2.0-rc.2 原生直连。输入服务器地址或 dsh 登录链接。公网域名必须使用 HTTPS。",
+        field_json_label: "连接配置 JSON",
+        field_json_badge: "非敏感参数",
+        field_json_hint: "包含 protocolVersion、origin 和 pairPath。公网必须使用 HTTPS。",
+        field_code_label: "一次性配对码",
+        badge_10min: "10 分钟时效",
+        field_code_hint: "由服务端命令生成的高熵随机凭据，单次兑换作废；配对成功后清空输入框，且不持久化保存配对码。",
+        field_device_label: "设备名称",
+        field_device_badge: "用于服务端识别",
+        field_device_hint: "在服务端设备列表中显示的标识名称，支持 1~80 个字符。",
+        field_direct_label: "服务器地址或 dsh 登录链接",
+        field_direct_hint: "输入服务器地址，或粘贴 dsh 提供的 dsh 登录链接。公网地址必须使用 HTTPS；HTTP 仅允许私有内网地址。",
+        status_idle: "未连接",
+        status_pairing: "正在验证并配对…",
+        status_connected: "已安全连接",
+        status_needs_pairing: "访问凭据已失效",
+        status_network_unavailable: "无法连接到服务器",
+        status_upstream_unavailable: "通信服务已连通，但后端服务未就绪",
+        desc_needs_pairing: "该设备的访问授权已失效或已在服务端撤销。请从电脑端生成新的 10 分钟配对码重新配对。",
+        desc_network_unavailable: "无法连接到目标服务器，请检查手机网络设置、飞行模式或服务器地址。",
+        desc_upstream_unavailable: "通信安全通道已建立，但电脑上的后台服务未运行或正在维护。请确认电脑上的服务已正常启动。",
+        label_credentials_status: "凭据状态",
+        val_credentials_saved: "访问凭据已安全保存",
+        btn_pair_and_connect: "配对并连接",
+        btn_pair_again: "重新配对",
+        btn_retry_conn: "重试连接",
+        btn_check_again: "重新检测",
+        btn_forget_connection: "清除此连接",
+        btn_test_ping: "测试通信连通性",
+        btn_connection_list: "连接列表",
+        btn_test_and_connect: "测试并连接",
+        dialog_forget_title: "确认清除此连接？",
+        dialog_forget_message: "确认清除此连接？将从本设备中移除已保存的访问凭据并断开连接。下次连接需要重新配对。",
+        btn_confirm_forget: "确认清除",
+        btn_cancel: "取消",
+        notice_web_title: "Web 管理功能说明",
+        notice_web_body: "出于安全防护考虑，私有服务模式不向公网开放 Web 页面。如需使用完整 Web 管理后台，请直接在运行服务的电脑本地浏览器中访问。",
+        btn_got_it: "知道了",
+        menu_new_session: "新建会话",
+        menu_refresh: "刷新连接",
+        menu_open_web: "在浏览器中打开",
+        badge_protocol_v1: "协议 v1",
+        label_server_origin: "服务器地址",
+        label_bound_device: "绑定设备",
+        fill_sample_btn: "填入示例配置 JSON",
+        test_web_notice_btn: "测试 Web 限制说明",
+        test_forget_btn: "测试“清除连接”确认弹窗",
+        title_conn_list: "已保存的直连地址",
+        toast_sample_filled: "已填入合成模拟配置",
+        toast_connected: "配对成功，访问凭据已安全保存",
+        toast_forgotten: "已从设备移除凭据并断开连接",
+        toast_ping_success: "通信正常，响应时延 42ms"
+      },
+      en: {
+        app_title: "DeepSeek Harness",
+        title_server_connection: "Server Connection",
+        mode_private_server: "Private Server",
+        mode_direct: "Direct Connection",
+        private_intro: "For public networks, pair securely via private bridge. Enter the nonsecret connection JSON and provide the short-lived one-time code separately.",
+        direct_intro: "Targets dsh 0.2.0-rc.2 direct connections. Enter the server address or dsh sign-in link. Public domains require HTTPS.",
+        field_json_label: "Connection JSON",
+        field_json_badge: "Nonsecret Parameters",
+        field_json_hint: "Includes protocolVersion, origin, and pairPath. HTTPS required for public origins.",
+        field_code_label: "One-Time Pairing Code",
+        badge_10min: "10-Min Expiry",
+        field_code_hint: "High-entropy code generated on server CLI. One-time use; clear the input on success and do not persist the code.",
+        field_device_label: "Device Name",
+        field_device_badge: "Server Identification",
+        field_device_hint: "Label shown in the server device registry. 1 to 80 characters.",
+        field_direct_label: "Server Address or dsh Sign-in Link",
+        field_direct_hint: "Enter the server address or paste the dsh sign-in link provided by dsh. Public addresses require HTTPS; HTTP is only allowed for private networks.",
+        status_idle: "Not connected",
+        status_pairing: "Verifying and pairing…",
+        status_connected: "Securely Connected",
+        status_needs_pairing: "Authorization Expired",
+        status_network_unavailable: "Cannot Reach Server",
+        status_upstream_unavailable: "Bridge Connected, Backend Unready",
+        desc_needs_pairing: "Device access credentials expired or were revoked on the server. Please generate a fresh 10-minute code on your computer to pair again.",
+        desc_network_unavailable: "Unable to reach the server. Please check your network connection, airplane mode, or server address.",
+        desc_upstream_unavailable: "Secure bridge tunnel established, but the backend service on the computer is not running. Please verify host service status.",
+        label_credentials_status: "Credential Status",
+        val_credentials_saved: "Access credentials saved securely",
+        btn_pair_and_connect: "Pair and Connect",
+        btn_pair_again: "Pair Again",
+        btn_retry_conn: "Retry Connection",
+        btn_check_again: "Check Again",
+        btn_forget_connection: "Forget Connection",
+        btn_test_ping: "Test Connection Ping",
+        btn_connection_list: "Connection List",
+        btn_test_and_connect: "Test and Connect",
+        dialog_forget_title: "Forget this connection?",
+        dialog_forget_message: "Forget this connection? The saved access credentials will be removed from this device and the connection will be disconnected. You must pair again next time.",
+        btn_confirm_forget: "Forget",
+        btn_cancel: "Cancel",
+        notice_web_title: "Web Console Notice",
+        notice_web_body: "For security reasons, web management pages are not exposed over the public network in private server mode. To access the web console, plugin settings, or developer tools, please use a local browser directly on the server computer.",
+        btn_got_it: "Got it",
+        menu_new_session: "New Session",
+        menu_refresh: "Refresh",
+        menu_open_web: "Open in Browser",
+        badge_protocol_v1: "Protocol v1",
+        label_server_origin: "Server Origin",
+        label_bound_device: "Device Name",
+        fill_sample_btn: "Fill Sample JSON",
+        test_web_notice_btn: "Test Web Notice Dialog",
+        test_forget_btn: "Test Forget Dialog",
+        title_conn_list: "Saved Direct Connections",
+        toast_sample_filled: "Synthetic configuration filled",
+        toast_connected: "Paired successfully. Access credentials saved securely.",
+        toast_forgotten: "Credentials removed from device and reset to idle.",
+        toast_ping_success: "Connection healthy (roundtrip 42ms)"
+      }
+    };
+
+    // Synthetic Mock JSON Template with two 11-char base64url segments (16 bytes = 128 bits)
+    const SAMPLE_JSON = JSON.stringify({
+      protocolVersion: 1,
+      origin: "https://harness.example.com",
+      pairPath: "/Q9w2aX8mN4b/T6pR1yK3cH0"
+    }, null, 2);
+
+    // Application Interactive State
+    const AppState = {
+      mode: "private", // "private" or "direct"
+      state: "Idle", // "Idle", "Pairing", "Connected", "NeedsPairing", "NetworkUnavailable", "UpstreamUnavailable", "Direct"
+      theme: "dark",
+      lang: "zh",
+      fontScale: 100,
+      viewport: "411",
+      pairingCodeMasked: true
+    };
+
+    // DOM Elements
+    const el = {
+      stateSelector: document.getElementById("stateSelector"),
+      themeSelector: document.getElementById("themeSelector"),
+      langSelector: document.getElementById("langSelector"),
+      fontSelector: document.getElementById("fontSelector"),
+      viewportSelector: document.getElementById("viewportSelector"),
+      deviceViewport: document.getElementById("deviceViewport"),
+      tabPrivateServer: document.getElementById("tabPrivateServer"),
+      tabDirect: document.getElementById("tabDirect"),
+      privateModeContainer: document.getElementById("privateModeContainer"),
+      directModeContainer: document.getElementById("directModeContainer"),
+      jsonInput: document.getElementById("jsonInput"),
+      jsonFeedback: document.getElementById("jsonFeedback"),
+      pairingCodeInput: document.getElementById("pairingCodeInput"),
+      deviceNameInput: document.getElementById("deviceNameInput"),
+      btnToggleMask: document.getElementById("btnToggleMask"),
+      eyeIcon: document.getElementById("eyeIcon"),
+      btnPrimaryPairAction: document.getElementById("btnPrimaryPairAction"),
+      btnPrimaryActionText: document.getElementById("btnPrimaryActionText"),
+      spinnerIcon: document.getElementById("spinnerIcon"),
+      statusBannerBox: document.getElementById("statusBannerBox"),
+      connectedCardBox: document.getElementById("connectedCardBox"),
+      pairingFormBox: document.getElementById("pairingFormBox"),
+      topStatusDot: document.getElementById("topStatusDot"),
+      topStatusLabel: document.getElementById("topStatusLabel"),
+      modeBadge: document.getElementById("modeBadge"),
+      btnOverflowMenu: document.getElementById("btnOverflowMenu"),
+      overflowDropdown: document.getElementById("overflowDropdown"),
+      menuItemOpenWeb: document.getElementById("menuItemOpenWeb"),
+      modalForgetConfirm: document.getElementById("modalForgetConfirm"),
+      modalWebNotice: document.getElementById("modalWebNotice"),
+      modalConnectionList: document.getElementById("modalConnectionList"),
+      btnForgetConnection: document.getElementById("btnForgetConnection"),
+      btnConfirmForget: document.getElementById("btnConfirmForget"),
+      btnCancelForget: document.getElementById("btnCancelForget"),
+      btnCloseWebNotice: document.getElementById("btnCloseWebNotice"),
+      btnTestPing: document.getElementById("btnTestPing"),
+      btnFillSample: document.getElementById("btnFillSample"),
+      btnShowWebNotice: document.getElementById("btnShowWebNotice"),
+      btnTriggerForget: document.getElementById("btnTriggerForget"),
+      btnConnectionList: document.getElementById("btnConnectionList"),
+      btnCloseConnList: document.getElementById("btnCloseConnList"),
+      toastMessage: document.getElementById("toastMessage")
+    };
+
+    function showToast(msg) {
+      el.toastMessage.textContent = msg;
+      el.toastMessage.classList.add("show");
+      setTimeout(() => el.toastMessage.classList.remove("show"), 2200);
+    }
+
+    function tr(key) {
+      return (I18N[AppState.lang] && I18N[AppState.lang][key]) || key;
+    }
+
+    function applyLocalization() {
+      document.querySelectorAll("[data-i18n]").forEach(item => {
+        const key = item.getAttribute("data-i18n");
+        if (I18N[AppState.lang][key]) {
+          item.textContent = I18N[AppState.lang][key];
+        }
+      });
+      el.modeBadge.textContent = AppState.mode === "private" ? tr("mode_private_server") : tr("mode_direct");
+      renderStateUI();
+    }
+
+    function updateTopStatus(dotClass, textKey) {
+      el.topStatusDot.className = "status-dot " + dotClass;
+      el.topStatusLabel.textContent = tr(textKey);
+    }
+
+    function renderStateUI() {
+      const s = AppState.state;
+
+      // Handle Direct Mode
+      if (AppState.mode === "direct" || s === "Direct") {
+        el.privateModeContainer.style.display = "none";
+        el.directModeContainer.style.display = "flex";
+        el.tabPrivateServer.classList.remove("active");
+        el.tabDirect.classList.add("active");
+        el.modeBadge.textContent = tr("mode_direct");
+        updateTopStatus("idle", "status_idle");
+        return;
+      }
+
+      // Private Server Mode UI
+      el.privateModeContainer.style.display = "flex";
+      el.directModeContainer.style.display = "none";
+      el.tabPrivateServer.classList.add("active");
+      el.tabDirect.classList.remove("active");
+      el.modeBadge.textContent = tr("mode_private_server");
+
+      // Reset components
+      el.spinnerIcon.style.display = "none";
+      el.btnPrimaryPairAction.disabled = false;
+      el.jsonInput.disabled = false;
+      el.pairingCodeInput.disabled = false;
+      el.deviceNameInput.disabled = false;
+      el.statusBannerBox.style.display = "none";
+      el.connectedCardBox.style.display = "none";
+      el.pairingFormBox.style.display = "flex";
+
+      switch (s) {
+        case "Idle":
+          updateTopStatus("idle", "status_idle");
+          el.btnPrimaryActionText.textContent = tr("btn_pair_and_connect");
+          break;
+
+        case "Pairing":
+          updateTopStatus("pairing", "status_pairing");
+          el.btnPrimaryActionText.textContent = tr("status_pairing");
+          el.spinnerIcon.style.display = "inline-block";
+          el.btnPrimaryPairAction.disabled = true;
+          el.jsonInput.disabled = true;
+          el.pairingCodeInput.disabled = true;
+          el.deviceNameInput.disabled = true;
+          break;
+
+        case "Connected":
+          updateTopStatus("connected", "status_connected");
+          el.pairingFormBox.style.display = "none";
+          el.connectedCardBox.style.display = "block";
+          // Clear input on success and do not persist the code
+          el.pairingCodeInput.value = "";
+          break;
+
+        case "NeedsPairing":
+          updateTopStatus("needs-pairing", "status_needs_pairing");
+          el.statusBannerBox.style.display = "block";
+          el.statusBannerBox.innerHTML = `
+            <div class="status-banner amber">
+              <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+              <div class="status-banner-content">
+                <div class="status-banner-title">${tr("status_needs_pairing")}</div>
+                <div>${tr("desc_needs_pairing")}</div>
+              </div>
+            </div>
+          `;
+          el.btnPrimaryActionText.textContent = tr("btn_pair_again");
+          // Clear single-use code input
+          el.pairingCodeInput.value = "";
+          break;
+
+        case "NetworkUnavailable":
+          updateTopStatus("network-unavailable", "status_network_unavailable");
+          el.statusBannerBox.style.display = "block";
+          el.statusBannerBox.innerHTML = `
+            <div class="status-banner red">
+              <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+              <div class="status-banner-content">
+                <div class="status-banner-title">${tr("status_network_unavailable")}</div>
+                <div>${tr("desc_network_unavailable")}</div>
+              </div>
+            </div>
+          `;
+          el.btnPrimaryActionText.textContent = tr("btn_retry_conn");
+          break;
+
+        case "UpstreamUnavailable":
+          updateTopStatus("upstream-unavailable", "status_upstream_unavailable");
+          el.statusBannerBox.style.display = "block";
+          el.statusBannerBox.innerHTML = `
+            <div class="status-banner amber">
+              <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+              <div class="status-banner-content">
+                <div class="status-banner-title">${tr("status_upstream_unavailable")}</div>
+                <div>${tr("desc_upstream_unavailable")}</div>
+              </div>
+            </div>
+          `;
+          el.btnPrimaryActionText.textContent = tr("btn_check_again");
+          break;
+      }
+    }
+
+    // State Selector Event
+    el.stateSelector.addEventListener("change", (e) => {
+      AppState.state = e.target.value;
+      if (AppState.state === "Direct") {
+        AppState.mode = "direct";
+      } else {
+        AppState.mode = "private";
+      }
+      renderStateUI();
+    });
+
+    // Theme Selector Event
+    el.themeSelector.addEventListener("change", (e) => {
+      AppState.theme = e.target.value;
+      document.body.className = AppState.theme === "dark" ? "theme-dark" : "theme-light";
+      if (AppState.fontScale === 150) document.body.classList.add("font-150");
+    });
+
+    // Language Selector Event
+    el.langSelector.addEventListener("change", (e) => {
+      AppState.lang = e.target.value;
+      applyLocalization();
+    });
+
+    // Font Scale Selector Event
+    el.fontSelector.addEventListener("change", (e) => {
+      AppState.fontScale = parseInt(e.target.value, 10);
+      if (AppState.fontScale === 150) {
+        document.body.classList.add("font-150");
+      } else {
+        document.body.classList.remove("font-150");
+      }
+    });
+
+    // Viewport Width Selector Event
+    el.viewportSelector.addEventListener("change", (e) => {
+      AppState.viewport = e.target.value;
+      el.deviceViewport.className = "device-viewport-wrapper w-" + AppState.viewport;
+    });
+
+    // Mode Tabs
+    el.tabPrivateServer.addEventListener("click", () => {
+      AppState.mode = "private";
+      if (AppState.state === "Direct") AppState.state = "Idle";
+      el.stateSelector.value = AppState.state;
+      renderStateUI();
+    });
+
+    el.tabDirect.addEventListener("click", () => {
+      AppState.mode = "direct";
+      AppState.state = "Direct";
+      el.stateSelector.value = "Direct";
+      renderStateUI();
+    });
+
+    // Password Eye Toggle
+    el.btnToggleMask.addEventListener("click", () => {
+      AppState.pairingCodeMasked = !AppState.pairingCodeMasked;
+      el.pairingCodeInput.type = AppState.pairingCodeMasked ? "password" : "text";
+      el.eyeIcon.innerHTML = AppState.pairingCodeMasked
+        ? '<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>'
+        : '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>';
+    });
+
+    // Real-time JSON validation (checks protocolVersion 1, origin, and two 11-char base64url segments)
+    el.jsonInput.addEventListener("input", () => {
+      const val = el.jsonInput.value.trim();
+      if (!val) {
+        el.jsonFeedback.textContent = tr("field_json_hint");
+        el.jsonFeedback.className = "field-helper";
+        return;
+      }
+      try {
+        const obj = JSON.parse(val);
+        const validPath = typeof obj.pairPath === "string" && /^\/[A-Za-z0-9_-]{11}\/[A-Za-z0-9_-]{11}$/.test(obj.pairPath);
+        if (obj.origin && validPath && obj.protocolVersion === 1) {
+          el.jsonFeedback.textContent = "✓ " + (AppState.lang === "zh" ? "有效配置：" + obj.origin + " (" + obj.pairPath + ")" : "Valid config: " + obj.origin);
+          el.jsonFeedback.className = "field-helper valid";
+        } else if (!validPath) {
+          el.jsonFeedback.textContent = AppState.lang === "zh" ? "配对路径格式需为两段各 11 字符 base64url (如 /Q9w2aX8mN4b/T6pR1yK3cH0)" : "pairPath must be two 11-char base64url segments (e.g. /Q9w2aX8mN4b/T6pR1yK3cH0)";
+          el.jsonFeedback.className = "field-helper invalid";
+        } else {
+          el.jsonFeedback.textContent = AppState.lang === "zh" ? "缺少必要字段 (protocolVersion: 1, origin, pairPath)" : "Missing required fields (protocolVersion: 1, origin, pairPath)";
+          el.jsonFeedback.className = "field-helper invalid";
+        }
+      } catch (err) {
+        el.jsonFeedback.textContent = AppState.lang === "zh" ? "JSON 格式不完整" : "Incomplete JSON syntax";
+        el.jsonFeedback.className = "field-helper invalid";
+      }
+    });
+
+    // Primary Pair Action Simulation
+    el.btnPrimaryPairAction.addEventListener("click", () => {
+      if (!el.jsonInput.value.trim()) {
+        el.jsonInput.value = SAMPLE_JSON;
+        el.jsonInput.dispatchEvent(new Event("input"));
+      }
+      if (!el.pairingCodeInput.value.trim()) {
+        el.pairingCodeInput.value = "mock_sec_9x8f2q1k";
+      }
+
+      // Enter Pairing state
+      AppState.state = "Pairing";
+      el.stateSelector.value = "Pairing";
+      renderStateUI();
+
+      // Simulate asynchronous safe pairing transition after 1.2s
+      setTimeout(() => {
+        AppState.state = "Connected";
+        el.stateSelector.value = "Connected";
+        // Clear input on success and do not persist code
+        el.pairingCodeInput.value = "";
+        renderStateUI();
+        showToast(tr("toast_connected"));
+      }, 1200);
+    });
+
+    // Forget Connection Dialog Flow
+    el.btnForgetConnection.addEventListener("click", () => {
+      el.modalForgetConfirm.classList.add("show");
+    });
+    el.btnCancelForget.addEventListener("click", () => {
+      el.modalForgetConfirm.classList.remove("show");
+    });
+    el.btnConfirmForget.addEventListener("click", () => {
+      el.modalForgetConfirm.classList.remove("show");
+      AppState.state = "Idle";
+      el.stateSelector.value = "Idle";
+      el.pairingCodeInput.value = "";
+      renderStateUI();
+      showToast(tr("toast_forgotten"));
+    });
+
+    // Overflow Menu & Web Notice Dialog
+    el.btnOverflowMenu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      el.overflowDropdown.classList.toggle("show");
+    });
+    document.addEventListener("click", () => {
+      el.overflowDropdown.classList.remove("show");
+    });
+    el.menuItemOpenWeb.addEventListener("click", (e) => {
+      e.stopPropagation();
+      el.overflowDropdown.classList.remove("show");
+      // In private server mode, official web console is disabled with explanation
+      el.modalWebNotice.classList.add("show");
+    });
+    el.btnCloseWebNotice.addEventListener("click", () => {
+      el.modalWebNotice.classList.remove("show");
+    });
+
+    // Test Buttons on Tool Deck
+    el.btnFillSample.addEventListener("click", () => {
+      el.jsonInput.value = SAMPLE_JSON;
+      el.jsonInput.dispatchEvent(new Event("input"));
+      el.pairingCodeInput.value = "mock_sec_9x8f2q1k";
+      showToast(tr("toast_sample_filled"));
+    });
+    el.btnShowWebNotice.addEventListener("click", () => {
+      el.modalWebNotice.classList.add("show");
+    });
+    el.btnTriggerForget.addEventListener("click", () => {
+      el.modalForgetConfirm.classList.add("show");
+    });
+    el.btnTestPing.addEventListener("click", () => {
+      showToast(tr("toast_ping_success"));
+    });
+
+    // Direct Mode Dialogs
+    el.btnConnectionList.addEventListener("click", () => {
+      el.modalConnectionList.classList.add("show");
+    });
+    el.btnCloseConnList.addEventListener("click", () => {
+      el.modalConnectionList.classList.remove("show");
+    });
+
+    // Initialize Default State
+    el.jsonInput.value = SAMPLE_JSON;
+    el.jsonInput.dispatchEvent(new Event("input"));
+    el.pairingCodeInput.value = "mock_sec_9x8f2q1k";
+    applyLocalization();
+    renderStateUI();
+  </script>
+</body>
+</html>
