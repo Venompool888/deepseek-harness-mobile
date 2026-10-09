@@ -26,6 +26,8 @@ internal class HarnessApi(
     },
     private val transport: (() -> HarnessTransport)? = null,
 ) {
+    private val sessionMetadata = java.util.concurrent.ConcurrentHashMap<String, Session>()
+
     data class Session(
         val id: String,
         val title: String?,
@@ -34,6 +36,8 @@ internal class HarnessApi(
         val updatedAt: Long,
         val running: Boolean,
         val blank: Boolean,
+        val origin: String? = null,
+        val parentSessionId: String? = null,
     )
 
     data class Workspace(
@@ -125,6 +129,7 @@ internal class HarnessApi(
         val todos: List<TodoItem> = emptyList(),
         val contextUsage: ContextUsage? = null,
         val runningStartedAt: Long? = null,
+        val questions: List<PendingQuestion> = emptyList(),
     )
 
     data class PendingApproval(
@@ -134,6 +139,8 @@ internal class HarnessApi(
         val toolName: String,
         val callId: String?,
         val reason: String?,
+        val displayReason: JSONObject? = null,
+        val generation: Long = 0,
     )
 
     data class SessionExport(val url: String, val cookie: String?, val authorization: String?)
@@ -160,19 +167,40 @@ internal class HarnessApi(
 
     fun sessions(): List<Session> {
         val value = call("session/list", JSONObject())
-        return value.getJSONArray("items").objects().map { item ->
-            val values = item.optJSONObject("projections")
-                ?.optJSONObject("values")
-            Session(
-                id = item.getString("sessionId"),
-                title = values?.optNullableString("title"),
-                cwd = item.optNullableString("cwd"),
-                agentPreset = values?.optNullableString("agentPreset") ?: item.optNullableString("agentPreset"),
-                updatedAt = item.optLong("updatedAt"),
-                running = item.optBoolean("running"),
-                blank = item.optBoolean("blank"),
-            )
+        return value.getJSONArray("items").objects().map(::parseSessionSummary).also { rows ->
+            rows.forEach { sessionMetadata[it.id] = it }
         }
+    }
+
+    /** Whether current metadata is enough to construct a legal follow/page address. */
+    fun isSessionAddressResolved(sessionId: String): Boolean = sessionAddress(sessionId) != null
+
+    private fun sessionAddress(sessionId: String): HarnessSessionAddress? = sessionMetadata[sessionId]?.let {
+        resolveHarnessSessionAddress(it.id, it.origin, it.parentSessionId)
+    }
+
+    private fun resolveSessionAddress(sessionId: String): HarnessSessionAddress {
+        sessionAddress(sessionId)?.let { return it }
+        // Legacy callers may request history directly; consult the authoritative
+        // directory before ever issuing a follow/page for an unknown id.
+        sessions()
+        return sessionAddress(sessionId)
+            ?: throw IOException("Session address is not resolved; refresh the session directory")
+    }
+
+    private fun parseSessionSummary(item: JSONObject): Session {
+        val values = item.optJSONObject("projections")?.optJSONObject("values")
+        return Session(
+            id = item.getString("sessionId"),
+            title = values?.optNullableString("title"),
+            cwd = item.optNullableString("cwd"),
+            agentPreset = values?.optNullableString("agentPreset") ?: item.optNullableString("agentPreset"),
+            updatedAt = item.optLong("updatedAt"),
+            running = item.optBoolean("running"),
+            blank = item.optBoolean("blank"),
+            origin = item.optNullableString("origin"),
+            parentSessionId = item.optNullableString("parentSessionId"),
+        )
     }
 
     fun workspaces(): List<Workspace> {
@@ -288,6 +316,7 @@ internal class HarnessApi(
                 messageTokens = contextBreakdown?.takeIf { it.has("messageTokens") }?.optLong("messageTokens"),
             ) else null,
             runningStartedAt = runningTurnStart(value.getJSONArray("events")),
+            questions = parseContinuedQuestions(values?.optJSONObject("userQuestions"), sessionId, values?.optJSONObject("inbox")),
         )
     }
 
@@ -365,7 +394,9 @@ internal class HarnessApi(
         val payload = JSONObject()
         if (workspaceId != null) payload.put("workspaceId", workspaceId)
         if (agentPreset != null) payload.put("agentPreset", agentPreset)
-        return call("session/create", payload).getString("sessionId")
+        val id = call("session/create", payload).getString("sessionId")
+        sessionMetadata[id] = Session(id, null, null, agentPreset, 0, false, true)
+        return id
     }
 
     fun agentPresets(): List<AgentPreset> {
@@ -390,12 +421,13 @@ internal class HarnessApi(
         call("session/rename", JSONObject().put("sessionId", sessionId).put("title", title))
     }
 
-    fun forkSession(sessionId: String, atSeq: Long? = null): String = call(
-        "session/fork",
-        JSONObject().put("sessionId", sessionId).apply {
+    fun forkSession(sessionId: String, atSeq: Long? = null): String {
+        val id = call("session/fork", JSONObject().put("sessionId", sessionId).apply {
             if (atSeq != null) put("atSeq", atSeq)
-        },
-    ).getString("sessionId")
+        }).getString("sessionId")
+        sessionMetadata[id] = Session(id, null, sessionMetadata[sessionId]?.cwd, null, 0, false, true)
+        return id
+    }
 
     fun messageFeedback(sessionId: String): List<MessageFeedback> {
         val result = callRemote("messageFeedback/list", JSONObject().put("sessionId", sessionId))
@@ -492,16 +524,138 @@ internal class HarnessApi(
     private var liveSignal: ((JSONObject) -> Unit)? = null
     @Volatile private var eventClientId: String? = null
     private val approvals = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val approvalCarriers = java.util.concurrent.ConcurrentHashMap<String, HarnessTransport>()
+    private val pendingQuestions = java.util.concurrent.ConcurrentHashMap<String, PendingQuestion>()
+    private val questionCarriers = java.util.concurrent.ConcurrentHashMap<String, HarnessTransport>()
+    private val questionWaitStreams = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val queuedReplyCalls = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+    private val continuedQuestionCalls = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+    private val userQuestionProjections = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
+    @Volatile private var liveCarrier: HarnessTransport? = null
     private val remoteEvents = HarnessRemoteEvents()
 
     fun respondApproval(approval: PendingApproval, outcome: String) {
         require(outcome == "allowed-once" || outcome == "rejected")
-        val client = eventClientId ?: throw IOException("Approval connection has expired")
-        if (!remoteEvents.valid(approval.rpcId, approval.approvalId, approval.sessionId) || client != approval.rpcId) throw IOException("Approval has already been resolved")
-        remoteValue("\$events/result", JSONObject().put("clientId", client).put("eventId", approval.approvalId)
-            .put("outcome", JSONObject().put("kind", "result").put("value", outcome)))
-        approvals.remove(approval.approvalId)
-        remoteEvents.settle(approval.approvalId)
+        val (client, carrier, connection) = synchronized(muxLock) {
+            val currentClient = eventClientId ?: throw IOException("Approval connection has expired")
+            val currentConnection = liveConnection ?: throw IOException("Approval connection has expired")
+            if (currentClient != approval.rpcId || !remoteEvents.reserve(currentClient, approval.approvalId, approval.sessionId, "approval", approval.generation)) {
+                throw IOException("Approval has already been resolved")
+            }
+            Triple(currentClient, approvalCarriers[approval.approvalId] ?: liveCarrier
+                ?: throw IOException("Approval connection has expired"), currentConnection)
+        }
+        try {
+            remoteValue("\$events/result", eventResult(client, approval.approvalId,
+                JSONObject().put("kind", "result").put("value", outcome)), carrier)
+            synchronized(muxLock) {
+                if (remoteEvents.currentGeneration() != approval.generation || eventClientId != client || liveConnection !== connection) {
+                    throw IOException("Approval connection has expired")
+                }
+                // A Host cancel can race the result acknowledgement and remove the row first.
+                if (approvals[approval.approvalId] == approval.sessionId && approvalCarriers[approval.approvalId] === carrier) {
+                    approvals.remove(approval.approvalId)
+                    approvalCarriers.remove(approval.approvalId)
+                    remoteEvents.settle(approval.approvalId, approval.generation)
+                }
+            }
+        } catch (error: Exception) {
+            remoteEvents.unreserve(approval.approvalId, approval.generation)
+            throw error
+        }
+    }
+
+    fun respondQuestion(question: PendingQuestion, answers: List<UserQuestionAnswerItem>) {
+        validateQuestionAnswers(question.questions, answers)
+        val generation = remoteEvents.currentGeneration()
+        if (question.generation != 0L && question.generation != generation) throw IOException("Question connection has expired")
+        val eventId = question.eventId
+        if (eventId != null) {
+            val client = question.rpcId ?: throw IOException("Question connection has expired")
+            val (carrier, connection) = synchronized(muxLock) {
+                val currentConnection = liveConnection ?: throw IOException("Question connection has expired")
+                if (eventClientId != client || !remoteEvents.reserve(client, eventId, question.sessionId, "question", question.generation)) {
+                    throw IOException("Question has already been resolved")
+                }
+                (questionCarriers[eventId] ?: liveCarrier ?: throw IOException("Question connection has expired")) to currentConnection
+            }
+            try {
+                remoteValue("\$events/result", eventResult(client, eventId,
+                    JSONObject().put("kind", "result").put("value", questionAnswersJson(answers))), carrier)
+                synchronized(muxLock) {
+                    if (remoteEvents.currentGeneration() != question.generation || eventClientId != client || liveConnection !== connection) {
+                        throw IOException("Question connection has expired")
+                    }
+                    // Host cancellation may resolve and remove the row before this ack returns.
+                    val current = pendingQuestions[eventId]
+                    if (current?.rpcId == client && current.sessionId == question.sessionId && current.generation == question.generation && questionCarriers[eventId] === carrier) {
+                        pendingQuestions.remove(eventId)
+                        questionCarriers.remove(eventId)
+                        questionWaitStreams.remove(eventId)?.let(connection.router::cancel)
+                        remoteEvents.settle(eventId, question.generation)
+                    }
+                }
+            } catch (error: Exception) {
+                remoteEvents.unreserve(eventId, question.generation)
+                throw error
+            }
+            return
+        }
+        if (question.state != "continued" || question.callId == null) throw IOException("Question is no longer answerable")
+        val (carrier, connection) = synchronized(muxLock) {
+            if (question.generation != 0L && question.generation != remoteEvents.currentGeneration()) throw IOException("Question connection has expired")
+            (liveCarrier ?: throw IOException("Question connection has expired")) to (liveConnection ?: throw IOException("Question connection has expired"))
+        }
+        val result = remoteValue("userQuestions/answer", JSONObject()
+            .put("agentId", question.sessionId)
+            .put("callId", question.callId)
+            .put("answer", questionAnswersJson(answers)), carrier) as? JSONObject
+            ?: throw IOException("Invalid question response")
+        if (!result.optBoolean("ok")) {
+            val error = result.optJSONObject("error") ?: JSONObject()
+            throw IOException(error.optString("message", "Question is no longer answerable"))
+        }
+        // False is authoritative evidence that the continued request already closed.
+        if (result.opt("value") != true) throw IOException("Question is no longer answerable")
+        synchronized(muxLock) {
+            if (liveConnection !== connection || liveCarrier !== carrier) throw IOException("Question connection has expired")
+        }
+    }
+
+    fun cancelQuestion(question: PendingQuestion) {
+        val eventId = question.eventId ?: throw IOException("Continued questions cannot be cancelled remotely")
+        val client = question.rpcId ?: throw IOException("Question connection has expired")
+        val (carrier, connection) = synchronized(muxLock) {
+            val currentConnection = liveConnection ?: throw IOException("Question connection has expired")
+            if (eventClientId != client || !remoteEvents.reserve(client, eventId, question.sessionId, "question", question.generation)) {
+                throw IOException("Question has already been resolved")
+            }
+            (questionCarriers[eventId] ?: liveCarrier ?: throw IOException("Question connection has expired")) to currentConnection
+        }
+        try {
+            remoteValue("\$events/result", eventResult(client, eventId, JSONObject()
+                .put("kind", "rejected")
+                .put("error", JSONObject()
+                    .put("name", "UserQuestionError")
+                    .put("code", "ASK_CANCELLED")
+                    .put("message", "the user cancelled ask_user_question"))),
+                carrier)
+            synchronized(muxLock) {
+                if (remoteEvents.currentGeneration() != question.generation || eventClientId != client || liveConnection !== connection) {
+                    throw IOException("Question connection has expired")
+                }
+                val current = pendingQuestions[eventId]
+                if (current?.rpcId == client && current.sessionId == question.sessionId && current.generation == question.generation && questionCarriers[eventId] === carrier) {
+                    pendingQuestions.remove(eventId)
+                    questionCarriers.remove(eventId)
+                    questionWaitStreams.remove(eventId)?.let(connection.router::cancel)
+                    remoteEvents.settle(eventId, question.generation)
+                }
+            }
+        } catch (error: Exception) {
+            remoteEvents.unreserve(eventId, question.generation)
+            throw error
+        }
     }
 
     private fun currentTransport(): HarnessTransport {
@@ -518,20 +672,21 @@ internal class HarnessApi(
         val connection = newConnection()
         try { return connection.first(endpoint, args) } finally { connection.close() }
     }
-    private fun followArgs(sessionId: String) = JSONObject().put("request", JSONObject()
-        .put("address", JSONObject().put("kind", "session").put("sessionId", sessionId))
+    private fun followArgs(address: HarnessSessionAddress) = JSONObject().put("request", JSONObject()
+        .put("address", address.toJson())
         .put("assistantStream", true).put("maxMessages", 80))
 
     private fun sessionHistory(sessionId: String): JSONObject {
+        val address = resolveSessionAddress(sessionId)
         if (desiredSession == null) desiredSession = sessionId
         val connection = liveConnection
         if (connection != null && desiredSession == sessionId) synchronized(this) {
             if (followSession != sessionId || followState == null) {
                 followId?.let { connection.router.cancel(it) }
                 followSession = sessionId
-                val state = HarnessSessionState()
+                val state = HarnessSessionState(address)
                 followState = state
-                followId = connection.router.open("session/follow", followArgs(sessionId), ended = { connection.abort(it ?: IOException("Required Harness stream ended")) }) { item ->
+                followId = connection.router.open("session/follow", followArgs(address), ended = { connection.abort(it ?: IOException("Required Harness stream ended")) }) { item ->
                     if (liveConnection === connection && followState === state) {
                         state.accept(item)
                         liveSignal?.invoke(JSONObject().put("type", "session/event").put("sessionId", sessionId))
@@ -541,7 +696,7 @@ internal class HarnessApi(
             followState?.takeIf { it.isReady() }?.let { return it.history() }
         }
         val state = HarnessSessionState()
-        state.accept(firstStream("session/follow", followArgs(sessionId)))
+        state.accept(firstStream("session/follow", followArgs(address)))
         return state.history()
     }
 
@@ -552,23 +707,36 @@ internal class HarnessApi(
         synchronized(muxLock) {
             if (admission != muxGeneration) { connection.close(); return }
             liveConnection = connection
+            liveCarrier = carrier
             runningBySession.clear()
             liveSignal = onFrame
         }
         onFrame(JSONObject().put("type", "session/list-changed"))
         try {
-            desiredSession?.let { sessionHistory(it) }
+            desiredSession?.let { sessionId ->
+                if (!isSessionAddressResolved(sessionId)) runCatching { sessions() }
+                if (isSessionAddressResolved(sessionId)) sessionHistory(sessionId)
+            }
             connection.router.open("session/control", JSONObject(), ended = { connection.abort(it ?: IOException("Required Harness stream ended")) }) { item ->
                 if (liveConnection !== connection) return@open
                 if (item.optString("type") == "baseline") {
                     val baselines = item.getJSONObject("value").getJSONObject("projections")
-                    desiredSession?.let { selected -> baselines.optJSONObject(selected)?.let { baseline ->
-                        baseline.getJSONObject("values").keys().forEach { key -> followState?.projection(key, baseline.getJSONObject("values").opt(key), baseline.optLong("asOfSeq")) }
-                    } }
+                    for (sessionId in baselines.keys()) {
+                        val baseline = baselines.optJSONObject(sessionId) ?: continue
+                        val values = baseline.optJSONObject("values") ?: continue
+                        if (sessionId == followSession) values.keys().forEach { key ->
+                            followState?.projection(key, values.opt(key), baseline.optLong("asOfSeq"))
+                        }
+                        emitQuestionProjection(sessionId, values.optJSONObject("userQuestions"), values.optJSONObject("inbox"), onFrame)
+                    }
                 }
                 if (item.optString("type") == "projection") {
                     val sessionId = item.optString("sessionId")
-                    if (followSession == sessionId) followState?.projection(item.optString("key"), item.opt("value"), item.optLong("seq"))
+                    val key = item.optString("key")
+                    val value = item.opt("value")
+                    if (followSession == sessionId) followState?.projection(key, value, item.optLong("seq"))
+                    if (key == "userQuestions") emitQuestionProjection(sessionId, value as? JSONObject, null, onFrame)
+                    if (key == "inbox") emitQuestionProjection(sessionId, null, value as? JSONObject, onFrame)
                     onFrame(JSONObject().put("type", "session/projection").put("sessionId", sessionId))
                 }
             }
@@ -583,51 +751,242 @@ internal class HarnessApi(
                                 runningBySession[args.getString(0)] = args.getBoolean(1)
                                 onFrame(JSONObject().put("type", "session/status").put("sessionId", args.getString(0)).put("running", args.getBoolean(1)))
                             }
-                            "api-session/added" -> onFrame(JSONObject().put("type", "session/list-changed"))
-                            "api-session/removed" -> onFrame(JSONObject().put("type", "session/list-changed"))
+                            "api-session/added" -> {
+                                args.optJSONObject(0)?.let { summary ->
+                                    runCatching { parseSessionSummary(summary) }.getOrNull()?.let {
+                                        sessionMetadata[it.id] = it
+                                        if (it.id == desiredSession) runCatching { sessionHistory(it.id) }
+                                    }
+                                }
+                                onFrame(JSONObject().put("type", "session/list-changed"))
+                            }
+                            "api-session/removed" -> {
+                                args.optString(0).takeIf(String::isNotBlank)?.let(sessionMetadata::remove)
+                                onFrame(JSONObject().put("type", "session/list-changed"))
+                            }
                             "api-session/activity" -> onFrame(JSONObject().put("type", "session/list-changed"))
                         }
                     }
                     "waterfall" -> {
-                        val eventId = item.getString("eventId")
+                        val eventId = item.optString("eventId")
                         val client = eventClientId ?: return@open
-                        if (item.optString("event") == "approval/request" && item.optString("agentId") == desiredSession) {
-                            val sessionId = item.getString("agentId")
-                            approvals[eventId] = sessionId
-                            remoteEvents.offer(eventId, sessionId)
-                            onFrame(JSONObject(item.getJSONObject("request").toString()).put("type", "approval/requested")
-                                .put("sessionId", sessionId).put("approvalId", eventId).put("_rpcId", client))
-                        } else {
-                            eventWorker.execute { if (liveConnection === connection) runCatching { remoteValue("\$events/result", JSONObject().put("clientId", client).put("eventId", eventId).put("outcome", JSONObject().put("kind", "next")), carrier) } }
+                        val sessionId = item.optNullableString("agentId")?.takeIf(String::isNotBlank)
+                        val request = item.optJSONObject("request")
+                        val generation = remoteEvents.currentGeneration()
+                        if (eventId.isBlank() || sessionId == null || request == null) {
+                            respondNext(connection, carrier, client, eventId, generation)
+                        } else when (item.optString("event")) {
+                            "approval/request" -> {
+                                approvals[eventId] = sessionId
+                                approvalCarriers[eventId] = carrier
+                                remoteEvents.offer(eventId, sessionId, "approval", generation)
+                                val frame = JSONObject(request.toString()).put("type", "approval/requested")
+                                    .put("sessionId", sessionId).put("approvalId", eventId).put("_rpcId", client)
+                                    .put("generation", generation)
+                                request.optJSONObject("displayReason")?.let { frame.put("displayReason", it) }
+                                onFrame(frame)
+                            }
+                            "user-questions/request" -> receiveQuestionWaterfall(
+                                connection, carrier, client, generation, eventId, sessionId, request, onFrame,
+                            )
+                            else -> respondNext(connection, carrier, client, eventId, generation)
                         }
                     }
                     "cancel" -> {
                         val eventId = item.getString("eventId")
                         remoteEvents.settle(eventId)
                         approvals.remove(eventId)?.let { onFrame(JSONObject().put("type", "approval/resolved").put("sessionId", it).put("approvalId", eventId)) }
+                        approvalCarriers.remove(eventId)
+                        pendingQuestions.remove(eventId)?.let { onFrame(JSONObject().put("type", "question/resolved").put("sessionId", it.sessionId).put("questionId", it.questionId).put("eventId", eventId)) }
+                        questionCarriers.remove(eventId)
+                        questionWaitStreams.remove(eventId)?.let(connection.router::cancel)
                     }
                 }
             }
             connection.await()
         } finally {
             synchronized(muxLock) { if (liveConnection === connection) {
-                liveConnection = null; liveSignal = null; followState = null; followSession = null; followId = null; eventClientId = null
+                liveConnection = null; liveCarrier = null; liveSignal = null; followState = null; followSession = null; followId = null; eventClientId = null
                 approvals.entries.toList().forEach { onFrame(JSONObject().put("type", "approval/resolved").put("sessionId", it.value).put("approvalId", it.key)) }
-                approvals.clear()
+                pendingQuestions.values.forEach { onFrame(JSONObject().put("type", "question/resolved").put("sessionId", it.sessionId).put("questionId", it.questionId).put("eventId", it.eventId).put("callId", it.callId)) }
+                approvals.clear(); approvalCarriers.clear(); pendingQuestions.clear(); questionCarriers.clear(); questionWaitStreams.clear()
+                continuedQuestionCalls.clear(); queuedReplyCalls.clear(); userQuestionProjections.clear()
                 remoteEvents.clear()
             } }
             connection.close()
         }
     }
+    private fun respondNext(connection: HarnessRemoteConnection, carrier: HarnessTransport, client: String, eventId: String, generation: Long) {
+        if (eventId.isBlank()) return
+        eventWorker.execute {
+            if (liveConnection !== connection || remoteEvents.currentGeneration() != generation) return@execute
+            runCatching { remoteValue("\$events/result", eventResult(client, eventId, JSONObject().put("kind", "next")), carrier) }
+        }
+    }
+
+    private fun receiveQuestionWaterfall(
+        connection: HarnessRemoteConnection,
+        carrier: HarnessTransport,
+        client: String,
+        generation: Long,
+        eventId: String,
+        sessionId: String,
+        request: JSONObject,
+        onFrame: (JSONObject) -> Unit,
+    ) {
+        val questions = parseUserQuestions(request.opt("questions"))
+        if (questions == null) {
+            respondNext(connection, carrier, client, eventId, generation)
+            return
+        }
+        val wait = request.optJSONObject("wait")
+        val callId = wait?.optNullableString("callId")?.takeIf(String::isNotBlank)
+        val timed = wait?.optBoolean("timed") == true && callId != null
+        val pending = PendingQuestion(client, sessionId, callId ?: eventId, generation, eventId, callId, questions)
+        remoteEvents.offer(eventId, sessionId, "question", generation)
+        questionCarriers[eventId] = carrier
+        pendingQuestions[eventId] = pending
+        val publish: (Long?) -> Unit = { remainingMs ->
+            if (liveConnection === connection && remoteEvents.valid(client, eventId, sessionId, "question", generation)) {
+                val shown = if (remainingMs == null) pending else pending.copy(deadline = System.currentTimeMillis() + remainingMs)
+                pendingQuestions[eventId] = shown
+                onFrame(questionFrame("question/requested", shown).apply {
+                    if (remainingMs != null) put("remainingMs", remainingMs)
+                })
+            }
+        }
+        if (!timed) {
+            publish(null)
+            return
+        }
+        try {
+            val streamId = connection.router.open(
+                "userQuestions/attachWait",
+                JSONObject().put("agentId", sessionId).put("callId", callId),
+                ended = { _ ->
+                    if (liveConnection === connection && !remoteEvents.responding(eventId, generation)) {
+                        delegateQuestion(connection, carrier, client, eventId, sessionId, generation, onFrame)
+                    }
+                },
+            ) { opening ->
+                val remainingMs = opening.optLong("remainingMs", -1).takeIf { it >= 0 } ?: return@open
+                publish(remainingMs)
+            }
+            if (remoteEvents.valid(client, eventId, sessionId, "question", generation)) {
+                questionWaitStreams[eventId] = streamId
+            } else {
+                connection.router.cancel(streamId)
+            }
+        } catch (_: Exception) {
+            pendingQuestions.remove(eventId)
+            questionCarriers.remove(eventId)
+            remoteEvents.settle(eventId, generation)
+            respondNext(connection, carrier, client, eventId, generation)
+        }
+    }
+
+    private fun questionFrame(type: String, question: PendingQuestion): JSONObject = JSONObject()
+        .put("type", type)
+        .put("rpcId", question.rpcId)
+        .put("_rpcId", question.rpcId)
+        .put("sessionId", question.sessionId)
+        .put("questionId", question.questionId)
+        .put("eventId", question.eventId)
+        .put("callId", question.callId)
+        .put("questions", JSONArray().apply {
+            question.questions.forEach { q ->
+                val item = JSONObject().put("id", q.id).put("question", q.question)
+                    .put("multiSelect", q.multiSelect)
+                    .put("options", JSONArray().apply {
+                        q.options.forEach { option -> put(JSONObject().put("label", option.label).put("description", option.description)) }
+                    })
+                q.detail?.let { item.put("detail", it) }
+                q.header?.let { item.put("header", it) }
+                if (q.intentKind != null) item.put("intent", JSONObject()
+                    .put("kind", q.intentKind).put("approve", q.approveLabel).put("callId", q.intentCallId))
+                put(item)
+            }
+        })
+        .put("state", question.state)
+        .put("generation", question.generation)
+        .apply { question.deadline?.let { put("deadline", it) } }
+
+    private fun delegateQuestion(
+        connection: HarnessRemoteConnection,
+        carrier: HarnessTransport,
+        client: String,
+        eventId: String,
+        sessionId: String,
+        generation: Long,
+        onFrame: (JSONObject) -> Unit,
+    ) {
+        if (!remoteEvents.reserve(client, eventId, sessionId, "question", generation)) return
+        val question = pendingQuestions.remove(eventId)
+        questionCarriers.remove(eventId)
+        questionWaitStreams.remove(eventId)
+        question?.let { onFrame(JSONObject().put("type", "question/resolved").put("sessionId", it.sessionId).put("questionId", it.questionId).put("eventId", eventId).put("callId", it.callId)) }
+        eventWorker.execute {
+            try {
+                if (liveConnection === connection && remoteEvents.currentGeneration() == generation) {
+                    remoteValue("\$events/result", eventResult(client, eventId, JSONObject().put("kind", "next")), carrier)
+                }
+            } catch (error: Exception) {
+                // The Host can cancel the waterfall after ending attachWait but before this ack arrives.
+                // That stale result is expected; other failures must also stay on this worker thread.
+                if (error !is RemoteFailure || error.code != "events/stale-result") {
+                    val detail = (error as? RemoteFailure)?.code ?: error.javaClass.simpleName
+                    Log.w("HarnessApi", "Timed question continuation acknowledgement failed ($detail)")
+                }
+            } finally {
+                synchronized(muxLock) {
+                    if (remoteEvents.currentGeneration() == generation && eventClientId == client && liveConnection === connection) {
+                        remoteEvents.settle(eventId, generation)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun emitQuestionProjection(sessionId: String, questions: JSONObject?, inbox: JSONObject?, onFrame: (JSONObject) -> Unit) {
+        if (questions != null) userQuestionProjections[sessionId] = questions
+        if (inbox != null) queuedReplyCalls[sessionId] = queuedQuestionReplyIds(inbox)
+        val projection = userQuestionProjections[sessionId] ?: return
+        val queued = queuedReplyCalls[sessionId].orEmpty()
+        val active = projection.optJSONArray("active")
+        val visible = LinkedHashMap<String, PendingQuestion>()
+        if (active != null) for (index in 0 until active.length()) {
+            val row = active.optJSONObject(index) ?: continue
+            if (row.optString("state") != "continued") continue
+            val callId = row.optNullableString("callId")?.takeIf(String::isNotBlank) ?: continue
+            if (callId in queued) continue
+            val items = parseUserQuestions(row.opt("questions")) ?: continue
+            visible[callId] = PendingQuestion(null, sessionId, callId, 0, callId = callId, questions = items, state = "continued")
+        }
+        val previous = continuedQuestionCalls.computeIfAbsent(sessionId) { java.util.concurrent.ConcurrentHashMap.newKeySet() }
+        for (callId in previous.toSet() - visible.keys) {
+            onFrame(JSONObject().put("type", "question/resolved").put("sessionId", sessionId).put("questionId", callId).put("callId", callId))
+            previous.remove(callId)
+        }
+        for ((callId, question) in visible) {
+            onFrame(questionFrame("question/projection", question))
+            previous.add(callId)
+        }
+    }
+
     private val eventWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     fun closeMux() {
-        val old = synchronized(muxLock) {
+        val (old, notify, rows) = synchronized(muxLock) {
             muxGeneration++
             val connection = liveConnection
-            liveConnection = null; liveSignal = null; followState = null; followSession = null; followId = null; eventClientId = null
-            approvals.clear(); remoteEvents.clear(); runningBySession.clear()
-            connection
+            val notify = liveSignal
+            val rows = approvals.entries.map { entry -> JSONObject().put("type", "approval/resolved").put("sessionId", entry.value).put("approvalId", entry.key) } +
+                pendingQuestions.values.map { question -> JSONObject().put("type", "question/resolved").put("sessionId", question.sessionId).put("questionId", question.questionId).put("eventId", question.eventId).put("callId", question.callId) }
+            liveConnection = null; liveCarrier = null; liveSignal = null; followState = null; followSession = null; followId = null; eventClientId = null
+            approvals.clear(); approvalCarriers.clear(); pendingQuestions.clear(); questionCarriers.clear(); questionWaitStreams.clear()
+            continuedQuestionCalls.clear(); queuedReplyCalls.clear(); userQuestionProjections.clear(); remoteEvents.clear(); runningBySession.clear()
+            Triple(connection, notify, rows)
         }
+        if (notify != null) rows.forEach { notify.invoke(it) }
         old?.close()
     }
     fun hasLiveConnection() = liveConnection != null
@@ -644,6 +1003,44 @@ internal class HarnessApi(
         return HarnessRpc.value(rpcId, carrier.rpc(envelope))
     }
 
+    private fun eventResult(client: String, eventId: String, outcome: JSONObject) = JSONObject()
+        .put("clientId", client).put("eventId", eventId).put("outcome", outcome)
+
+}
+
+internal fun parseContinuedQuestions(values: JSONObject?, sessionId: String, inbox: JSONObject?): List<PendingQuestion> {
+    val active = values?.optJSONArray("active") ?: return emptyList()
+    val queued = inbox?.let(::queuedQuestionReplyIds).orEmpty()
+    val result = ArrayList<PendingQuestion>()
+    for (index in 0 until active.length()) {
+        val row = active.optJSONObject(index) ?: continue
+        if (row.optString("state") != "continued") continue
+        val callId = row.optNullableString("callId")?.takeIf(String::isNotBlank) ?: continue
+        if (callId in queued) continue
+        val questions = parseUserQuestions(row.opt("questions")) ?: continue
+        result += PendingQuestion(
+            rpcId = null,
+            sessionId = sessionId,
+            questionId = callId,
+            generation = 0,
+            callId = callId,
+            questions = questions,
+            state = "continued",
+        )
+    }
+    return result
+}
+
+private fun queuedQuestionReplyIds(inbox: JSONObject): Set<String> = buildSet {
+    for (target in listOf("next-step", "next-turn")) {
+        val messages = inbox.optJSONArray(target) ?: continue
+        for (index in 0 until messages.length()) {
+            val source = messages.optJSONObject(index)?.optJSONObject("source") ?: continue
+            if (source.optString("kind") == "user-question-reply") {
+                source.optNullableString("callId")?.takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+    }
 }
 
 internal enum class HarnessHttpFailure {

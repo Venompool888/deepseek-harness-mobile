@@ -6,6 +6,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HarnessRc2Test {
+    @Test fun sessionAddressResolutionKeepsOrdinaryAndRequiresSubagentParent() {
+        val ordinary = resolveHarnessSessionAddress("root-id", null, null)!!
+        assertEquals("session", ordinary.kind)
+        assertEquals("root-id", ordinary.toJson().getString("sessionId"))
+
+        val child = resolveHarnessSessionAddress("child-id", "subagent", "parent-id")!!
+        assertEquals("subagent", child.kind)
+        assertEquals("parent-id", child.toJson().getString("parentSessionId"))
+        assertEquals("child-id", child.toJson().getString("childSessionId"))
+        assertEquals("unknown", child.toJson().getString("mode"))
+
+        assertNull(resolveHarnessSessionAddress("child-id", "subagent", null))
+        assertNull(resolveHarnessSessionAddress("child-id", "subagent", "  "))
+        assertNull(resolveHarnessSessionAddress("", null, null))
+    }
+
+    @Test fun olderPageUsesTheResolvedSubagentAddress() {
+        val child = resolveHarnessSessionAddress("child-id", "subagent", "parent-id")!!
+        val state = HarnessSessionState(child)
+        state.accept(JSONObject("""{"type":"snapshot","cursor":4,"records":[],"projections":{"asOfSeq":4,"values":{}},"assistantStream":{"revision":0}}"""))
+        val request = state.pageRequest("child-id")
+        assertEquals("subagent", request.getJSONObject("address").getString("kind"))
+        assertEquals("parent-id", request.getJSONObject("address").getString("parentSessionId"))
+        assertEquals("child-id", request.getJSONObject("address").getString("childSessionId"))
+    }
+
     @Test fun durableAttemptDoesNotRemainAnActiveReply() {
         val state = HarnessSessionState()
         state.accept(JSONObject("""{"type":"snapshot","cursor":1,"records":[{"type":"event","event":{"seq":1,"time":100,"type":"assistant/attempt","data":{"turn":1,"step":1,"stream":[{"type":"text-chunks","time0":100,"index":0,"dt":[],"texts":["Incomplete prefix"]}]}}}],"projections":{"asOfSeq":1,"values":{}},"assistantStream":{"revision":0}}"""))
@@ -68,6 +94,62 @@ class HarnessRc2Test {
         events.offer("event2", "s1")
         events.ready("c2")
         assertFalse(events.valid("c1", "event2", "s1"))
+    }
+
+    @Test fun replayedEventIdInNewGenerationCannotBeUnlockedByOldFailure() {
+        val events = HarnessRemoteEvents()
+        val oldGeneration = events.ready("c1")
+        events.offer("replayed", "s1", "question", oldGeneration)
+        assertTrue(events.reserve("c1", "replayed", "s1", "question", oldGeneration))
+        val newGeneration = events.ready("c2")
+        events.offer("replayed", "s1", "question", newGeneration)
+        assertTrue(events.reserve("c2", "replayed", "s1", "question", newGeneration))
+
+        events.unreserve("replayed", oldGeneration)
+        assertNull(events.settle("replayed", oldGeneration))
+        assertFalse(events.valid("c2", "replayed", "s1", "question", newGeneration))
+        assertNotNull(events.settle("replayed", newGeneration))
+    }
+
+    @Test fun questionFramesKeepRequestAndSessionIdentityAcrossConcurrentRequests() {
+        val one = parsePendingQuestion(JSONObject("""{"type":"question/requested","sessionId":"s1","eventId":"e1","_rpcId":"c1","generation":4,"questions":[{"id":"q1","question":"Choose","options":[{"label":"A"},{"label":"B"}]}]}"""))!!
+        val two = parsePendingQuestion(JSONObject("""{"type":"question/requested","sessionId":"s2","eventId":"e2","_rpcId":"c1","generation":4,"questions":[{"id":"q1","question":"Choose","options":[{"label":"A"},{"label":"B"}]}]}"""))!!
+        assertEquals("s1:e1", one.key)
+        assertEquals("s2:e2", two.key)
+        assertEquals("e1", one.eventId)
+        assertEquals("s2", two.sessionId)
+    }
+
+    @Test fun answerBatchMustNameEveryQuestionAndUseOnlyOfferedChoices() {
+        val questions = parseUserQuestions(JSONArray("""[{"id":"q1","question":"One","options":[{"label":"A"},{"label":"B"}]},{"id":"q2","question":"Two","multiSelect":true,"options":[{"label":"X"},{"label":"Y"}]}]"""))!!
+        validateQuestionAnswers(questions, listOf(
+            UserQuestionAnswerItem("q1", listOf("A")),
+            UserQuestionAnswerItem("q2", listOf("X", "Y")),
+        ))
+        assertThrows(IllegalArgumentException::class.java) {
+            validateQuestionAnswers(questions, listOf(UserQuestionAnswerItem("q1", listOf("A")), UserQuestionAnswerItem("other", emptyList())))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validateQuestionAnswers(questions, listOf(UserQuestionAnswerItem("q1", listOf("unoffered")), UserQuestionAnswerItem("q2", emptyList())))
+        }
+    }
+
+    @Test fun freeTextQuestionUsesCustomAndEmptySelection() {
+        val questions = parseUserQuestions(JSONArray("""[{"id":"q1","question":"What should I call it?"}]"""))!!
+        validateQuestionAnswers(questions, listOf(UserQuestionAnswerItem("q1", emptyList(), "Harbor")))
+        assertEquals("Harbor", questionAnswersJson(listOf(UserQuestionAnswerItem("q1", emptyList(), "Harbor")))
+            .getJSONArray("answers").getJSONObject(0).getString("custom"))
+    }
+
+    @Test fun continuedQuestionSurvivesBaselineBeforeEventsReadyAndDropsQueuedReply() {
+        val projection = JSONObject("""{"active":[{"callId":"call-a","state":"continued","questions":[{"id":"q1","question":"Choose"}]},{"callId":"call-b","state":"continued","questions":[{"id":"q2","question":"Name"}]}]}""")
+        val history = parseContinuedQuestions(projection, "s1", null)
+        assertEquals(2, history.size)
+        assertTrue(history.all { it.generation == 0L })
+        val inbox = JSONObject("""{"next-step":[{"source":{"kind":"user-question-reply","callId":"call-a"}}],"next-turn":[]}""")
+        val restored = parseContinuedQuestions(projection, "s1", inbox)
+        assertEquals(listOf("call-b"), restored.map { it.callId })
+        assertEquals(0L, restored.single().generation)
     }
 
     @Test fun systemPromptIsRecognizedContext() {

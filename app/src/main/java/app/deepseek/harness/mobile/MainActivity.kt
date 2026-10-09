@@ -155,8 +155,14 @@ class MainActivity : ComponentActivity() {
     private val messageFeedback = mutableMapOf<String, HarnessApi.MessageFeedback>()
     private val feedbackPending = mutableSetOf<String>()
     private var todosExpanded = false
-    private val pendingApprovalsBySession = mutableMapOf<String, HarnessApi.PendingApproval>()
-    private var approvalResponding = false
+    private val pendingApprovals = linkedMapOf<String, HarnessApi.PendingApproval>()
+    private val interactionResponding = mutableSetOf<String>()
+    private val pendingQuestions = linkedMapOf<String, PendingQuestion>()
+    private val questionDrafts = mutableMapOf<String, QuestionDraft>()
+    private val interactionErrors = mutableMapOf<String, String>()
+    private val selectedInteraction = mutableMapOf<String, String>()
+    private val hiddenQuestions = mutableSetOf<String>()
+    private data class QuestionDraft(val selected: MutableMap<String, MutableSet<String>> = mutableMapOf(), val custom: MutableMap<String, String> = mutableMapOf())
     private var runningStartedAt: Long? = null
     private var runClockView: TextView? = null
     private var promptMode = "queue"
@@ -237,6 +243,21 @@ class MainActivity : ComponentActivity() {
         debugMessageActionsPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_MESSAGE_ACTIONS_PREVIEW, false)
         debugProviderOnboardingPreview = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_DEBUG_PROVIDER_ONBOARDING_PREVIEW, false)
         pendingOpenSessionId = intent.getStringExtra(TaskMonitorService.EXTRA_OPEN_SESSION_ID)
+        if (savedInstanceState?.getString("interactionProfile") == activeProfileKey) {
+            pendingOpenSessionId = savedInstanceState?.getString("interactionSession") ?: pendingOpenSessionId
+            runCatching { JSONObject(savedInstanceState?.getString("interactionDrafts") ?: "{}") }.getOrNull()?.let { drafts ->
+                drafts.keys().forEach { key ->
+                    val row = drafts.optJSONObject(key) ?: return@forEach
+                    val draft = QuestionDraft()
+                    row.optJSONObject("selected")?.let { selected -> selected.keys().forEach { id ->
+                        val labels = selected.optJSONArray(id) ?: return@forEach
+                        draft.selected[id] = (0 until labels.length()).map { labels.getString(it) }.toMutableSet()
+                    } }
+                    row.optJSONObject("custom")?.let { custom -> custom.keys().forEach { id -> draft.custom[id] = custom.getString(id) } }
+                    questionDrafts[key] = draft
+                }
+            }
+        }
         configureWindow()
         setContentView(buildScreen())
         requestNotificationPermissionIfNeeded()
@@ -257,6 +278,20 @@ class MainActivity : ComponentActivity() {
             }
             else -> refresh(showSpinner = true)
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("interactionProfile", activeProfileKey)
+        outState.putString("interactionSession", currentSession?.id)
+        val drafts = JSONObject()
+        questionDrafts.forEach { (key, draft) ->
+            drafts.put(key, JSONObject().put("selected", JSONObject().apply {
+                draft.selected.forEach { (id, labels) -> put(id, JSONArray(labels.toList())) }
+            }).put("custom", JSONObject(draft.custom.toMap())))
+        }
+        val encoded = drafts.toString()
+        if (encoded.length <= 65_536) outState.putString("interactionDrafts", encoded)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -514,7 +549,7 @@ class MainActivity : ComponentActivity() {
             running = true,
             blank = false,
         )
-        pendingApprovalsBySession[sessionId] = HarnessApi.PendingApproval(
+        pendingApprovals["debug-approval-id"] = HarnessApi.PendingApproval(
             rpcId = "debug-approval-rpc",
             sessionId = sessionId,
             approvalId = "debug-approval-id",
@@ -888,23 +923,206 @@ class MainActivity : ComponentActivity() {
         layoutParams = LinearLayout.LayoutParams(WRAP, dp(48)).apply { marginEnd = dp(3) }
     }
 
+    private fun pendingKeys(sessionId: String): List<String> =
+        pendingApprovals.values.filter { it.sessionId == sessionId }.map { it.approvalId } +
+            pendingQuestions.values.filter { it.sessionId == sessionId }.map { it.key }
+
+    private fun interactionLabel(key: String): String = pendingApprovals[key]?.let {
+        tr("审批 · ${it.toolName}", "Approval · ${it.toolName}")
+    } ?: pendingQuestions[key]?.let {
+        if (it.questions.singleOrNull()?.intentKind == "plan-review") tr("计划确认", "Plan review")
+        else tr("${it.questions.size} 个问题", "${it.questions.size} questions")
+    } ?: tr("待处理请求", "Pending request")
+
+    private var renderedInteractionSignature = ""
     private fun renderComposerSeat() {
         if (!::composerSeat.isInitialized || !::normalComposerCard.isInitialized) return
-        val approval = currentSession?.id?.let(pendingApprovalsBySession::get)
-        if (approval == null) {
+        val sessionId = currentSession?.id
+        val allKeys = sessionId?.let(::pendingKeys).orEmpty()
+        val keys = allKeys.filterNot { it in hiddenQuestions }
+        val key = selectedInteraction[sessionId]?.takeIf(keys::contains) ?: keys.firstOrNull()
+        val approval = pendingApprovals[key]
+        val question = pendingQuestions[key]
+        val signature = "$sessionId:${currentSession?.origin}:$key:$allKeys:$approval:$question:${key in interactionResponding}:${interactionErrors[key]}:${approval?.let(::approvalCommand)}"
+        if (signature == renderedInteractionSignature && composerSeat.childCount > 0) return
+        renderedInteractionSignature = signature
+        composerSeat.removeAllViews()
+        if (key == null) {
             renderTodoDock()
-            if (composerSeat.childCount != 1 || composerSeat.getChildAt(0) !== normalComposerCard) {
-                composerSeat.removeAllViews()
+            if (allKeys.isNotEmpty()) composerSeat.addView(approvalButton(tr("重新打开待回答问题 (${allKeys.size})", "Reopen questions (${allKeys.size})"), false, true) {
+                hiddenQuestions.removeAll(allKeys.toSet())
+                renderComposerSeat()
+            }, LinearLayout.LayoutParams(MATCH, WRAP))
+            if (currentSession?.origin == "subagent") {
+                composerSeat.addView(interactionText(tr("子 Agent 会话：可查看任务并处理审批。", "Child agent session: view the task and handle its approvals."), true).apply {
+                    setPadding(dp(16), dp(12), dp(16), dp(12))
+                }, LinearLayout.LayoutParams(MATCH, WRAP))
+            } else {
                 (normalComposerCard.parent as? ViewGroup)?.removeView(normalComposerCard)
                 composerSeat.addView(normalComposerCard, LinearLayout.LayoutParams(MATCH, WRAP))
             }
             renderStats()
-        } else {
-            composerSeat.removeAllViews()
-            todoPanelHost.visibility = View.GONE
-            statsView.visibility = View.GONE
-            composerSeat.addView(buildApprovalCard(approval), LinearLayout.LayoutParams(MATCH, WRAP))
+            return
         }
+        todoPanelHost.visibility = View.GONE
+        statsView.visibility = View.GONE
+        if (keys.size > 1) {
+            val index = keys.indexOf(key)
+            composerSeat.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(approvalButton("‹", false, index > 0) { selectedInteraction[sessionId!!] = keys[index - 1]; renderComposerSeat() }.apply {
+                    contentDescription = tr("上一条待处理请求", "Previous pending request")
+                }, LinearLayout.LayoutParams(dp(48), dp(48)))
+                addView(TextView(this@MainActivity).apply {
+                    text = tr("待处理 ${index + 1}/${keys.size} · ${interactionLabel(key)}", "Pending ${index + 1}/${keys.size} · ${interactionLabel(key)}")
+                    textSize = 12f
+                    setTextColor(COLOR_MUTED)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                addView(approvalButton("›", false, index < keys.lastIndex) { selectedInteraction[sessionId!!] = keys[index + 1]; renderComposerSeat() }.apply {
+                    contentDescription = tr("下一条待处理请求", "Next pending request")
+                }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            }, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
+        if (approval != null) composerSeat.addView(buildApprovalCard(approval), LinearLayout.LayoutParams(MATCH, WRAP))
+        else if (question != null) composerSeat.addView(buildQuestionCard(question), LinearLayout.LayoutParams(MATCH, WRAP))
+    }
+
+    /** A bounded body scrolls independently; decision buttons remain outside it. */
+    private inner class InteractionScrollView : ScrollView(this@MainActivity) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val visible = android.graphics.Rect()
+            window.decorView.getWindowVisibleDisplayFrame(visible)
+            val viewport = visible.height().takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+            val available = minOf(View.MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 } ?: viewport, viewport)
+            val cap = minOf(dp(320), (available * .35f).toInt()).coerceAtLeast(1)
+            super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(cap, View.MeasureSpec.AT_MOST))
+        }
+    }
+
+    private fun interactionText(label: String, muted: Boolean = false) = TextView(this).apply {
+        text = label
+        textSize = if (muted) 13f else 15f
+        setTextColor(if (muted) COLOR_MUTED else COLOR_TEXT)
+        setLineSpacing(dp(3).toFloat(), 1f)
+        setPadding(0, dp(6), 0, dp(6))
+        setTextIsSelectable(true)
+    }
+
+    private fun interactionError(key: String): View? = interactionErrors[key]?.let { error ->
+        interactionText(error).apply {
+            setTextColor(COLOR_AMBER)
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+    }
+
+    private fun buildQuestionCard(question: PendingQuestion): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedStroke(COLOR_CODE_SURFACE, COLOR_BORDER, 16f)
+        val enabled = question.key !in interactionResponding && api.hasLiveConnection()
+        val isPlan = question.questions.any { it.intentKind == "plan-review" }
+        addView(interactionText(if (isPlan) tr("等待计划确认", "Waiting for plan review") else tr("等待你的回答", "Waiting for your answer")).apply {
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_BLUE)
+            setPadding(dp(16), dp(12), dp(16), dp(8))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        val body = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, dp(16), dp(12))
+        }
+        if (question.state == "continued") body.addView(interactionText(tr("任务已继续，你仍可稍后回答。", "The task continued. You can still answer later."), true))
+        else question.deadline?.let { deadline ->
+            val timer = interactionText("", true)
+            fun updateTimer() {
+                val seconds = ((deadline - System.currentTimeMillis()).coerceAtLeast(0) / 1000)
+                timer.text = if (seconds > 0) tr("限时问题 · 剩余约 $seconds 秒", "Timed question · about $seconds seconds remaining")
+                    else tr("等待服务器更新问题状态…", "Waiting for the server to update this question…")
+            }
+            updateTimer()
+            body.addView(timer)
+            mainHandler.postDelayed(object : Runnable {
+                override fun run() {
+                    if (!timer.isAttachedToWindow) return
+                    updateTimer()
+                    if (System.currentTimeMillis() < deadline) mainHandler.postDelayed(this, 1_000)
+                }
+            }, 1_000)
+        }
+        val draft = questionDrafts.getOrPut(question.key) { QuestionDraft() }
+        question.questions.forEachIndexed { index, item ->
+            item.header?.let { body.addView(interactionText(it, true)) }
+            body.addView(interactionText(if (question.questions.size > 1) "${index + 1}/${question.questions.size} · ${item.question}" else item.question).apply { typeface = Typeface.DEFAULT_BOLD })
+            item.detail?.let { body.addView(interactionText(it)) }
+            if (item.multiSelect) body.addView(interactionText(tr("可选择多项，也可补充文字", "Select multiple options and add text if needed"), true))
+            val selected = draft.selected.getOrPut(item.id) { linkedSetOf() }
+            val options = mutableListOf<android.widget.CompoundButton>()
+            var customField: EditText? = null
+            item.options.forEach { option ->
+                val button: android.widget.CompoundButton = if (item.multiSelect) CheckBox(this@MainActivity) else android.widget.RadioButton(this@MainActivity)
+                button.apply {
+                    text = if (option.description.isNullOrBlank()) option.label else "${option.label}\n${option.description}"
+                    textSize = 14f
+                    setTextColor(COLOR_TEXT)
+                    buttonTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(COLOR_BLUE, COLOR_MUTED))
+                    minHeight = dp(48)
+                    setPadding(dp(4), dp(8), dp(8), dp(8))
+                    isEnabled = enabled
+                    isChecked = option.label in selected
+                    setOnCheckedChangeListener { _, checked ->
+                        if (checked) {
+                            if (!item.multiSelect) {
+                                selected.clear()
+                                options.filterNot { it === this }.forEach { it.isChecked = false }
+                                customField?.setText("")
+                            }
+                            selected.add(option.label)
+                        } else selected.remove(option.label)
+                    }
+                }
+                options.add(button)
+                body.addView(button, LinearLayout.LayoutParams(MATCH, WRAP))
+            }
+            body.addView(EditText(this@MainActivity).apply {
+                customField = this
+                hint = if (item.options.isEmpty()) tr("输入回答", "Enter your answer") else tr("其他回答／补充说明", "Other answer / additional details")
+                contentDescription = tr("问题 ${item.id} 的自定义回答", "Custom answer for ${item.id}")
+                textSize = 14f
+                setTextColor(COLOR_TEXT)
+                setHintTextColor(COLOR_MUTED)
+                background = roundedStroke(COLOR_COMPOSER, COLOR_BORDER, 12f)
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                minHeight = dp(48)
+                maxLines = 6
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                isEnabled = enabled
+                setText(draft.custom[item.id].orEmpty())
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                        draft.custom[item.id] = s?.toString().orEmpty()
+                        if (!item.multiSelect && !s.isNullOrBlank()) {
+                            selected.clear()
+                            options.forEach { it.isChecked = false }
+                        }
+                    }
+                    override fun afterTextChanged(s: Editable?) = Unit
+                })
+            }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8); bottomMargin = dp(8) })
+        }
+        addView(InteractionScrollView().apply { addView(body, ViewGroup.LayoutParams(MATCH, WRAP)) }, LinearLayout.LayoutParams(MATCH, WRAP))
+        interactionError(question.key)?.let { addView(it) }
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(12), dp(8), dp(12), dp(12))
+            addView(approvalButton(if (question.state == "continued") tr("稍后回答", "Answer later") else tr("取消问题", "Cancel question"), false, enabled) { cancelQuestion(question) }, LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginEnd = dp(8) })
+            addView(approvalButton(if (question.key in interactionResponding) tr("正在提交…", "Submitting…") else if (isPlan) tr("提交计划决定", "Submit decision") else tr("提交回答", "Submit answers"), true, enabled) { answerQuestion(question) }, LinearLayout.LayoutParams(0, WRAP, 1f))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
     }
 
     private fun renderTodoDock() {
@@ -1025,13 +1243,15 @@ class MainActivity : ComponentActivity() {
                 setTextColor(COLOR_AMBER)
                 gravity = Gravity.CENTER_VERTICAL
             }, LinearLayout.LayoutParams(0, MATCH, 1f))
-        }, LinearLayout.LayoutParams(MATCH, dp(44)))
+        }, LinearLayout.LayoutParams(MATCH, WRAP).apply { height = dp(48) })
 
         val detailColumn = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(8))
             addView(TextView(this@MainActivity).apply {
-                text = approval.reason ?: tr("${approval.toolName} 需要审批", "${approval.toolName} requires approval")
+                text = approval.displayReason?.optNullableString(if (appLanguage == AppLanguage.CHINESE) "zh" else "en")
+                    ?: approval.displayReason?.optNullableString("en")
+                    ?: approval.reason ?: tr("${approval.toolName} 需要审批", "${approval.toolName} requires approval")
                 textSize = 15f
                 setLineSpacing(dp(3).toFloat(), 1f)
                 setTextColor(COLOR_TEXT)
@@ -1050,25 +1270,29 @@ class MainActivity : ComponentActivity() {
                 }, LinearLayout.LayoutParams(MATCH, WRAP))
             }
         }
-        addView(ScrollView(this@MainActivity).apply {
-            isFillViewport = false
+        addView(InteractionScrollView().apply {
             addView(detailColumn, ViewGroup.LayoutParams(MATCH, WRAP))
-        }, LinearLayout.LayoutParams(MATCH, dp(220)))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        interactionError(approval.approvalId)?.let { addView(it) }
 
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(8), dp(16), dp(14))
-            addView(approvalButton(tr("拒绝", "Reject"), false, !approvalResponding) {
+            addView(approvalButton(tr("拒绝", "Reject"), false, approval.approvalId !in interactionResponding && api.hasLiveConnection()) {
                 answerApproval(approval, "rejected")
-            }, LinearLayout.LayoutParams(dp(92), dp(44)).apply { marginEnd = dp(8) })
-            addView(approvalButton(tr("允许一次", "Allow once"), true, !approvalResponding) {
+            }, LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginEnd = dp(8) })
+            addView(approvalButton(tr("允许一次", "Allow once"), true, approval.approvalId !in interactionResponding && api.hasLiveConnection()) {
                 answerApproval(approval, "allowed-once")
-            }, LinearLayout.LayoutParams(dp(122), dp(44)))
-        }, LinearLayout.LayoutParams(MATCH, dp(66)))
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
     }
 
-    private fun approvalButton(label: String, primary: Boolean, enabledNow: Boolean, action: () -> Unit) = TextView(this).apply {
+    private fun approvalButton(label: String, primary: Boolean, enabledNow: Boolean, action: () -> Unit) = android.widget.Button(this).apply {
+        isAllCaps = false
+        minHeight = dp(48)
+        minWidth = dp(48)
+        setPadding(dp(10), dp(10), dp(10), dp(10))
         text = label
         textSize = 14f
         gravity = Gravity.CENTER
@@ -1081,34 +1305,76 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun approvalCommand(approval: HarnessApi.PendingApproval): String? {
-        val detail = lastMessages.lastOrNull { it.callId == approval.callId }?.detail ?: return null
+        val callId = approval.callId ?: return null
+        val detail = lastMessages.lastOrNull { it.callId == callId }?.detail ?: return null
         val json = detail.removePrefix("IN\n").substringBefore("\n\nOUT\n")
         return runCatching { JSONObject(json).optString("command").takeIf(String::isNotBlank) }.getOrNull()
     }
 
     private fun answerApproval(approval: HarnessApi.PendingApproval, outcome: String) {
+        submitInteraction(approval.approvalId, {
+            api.respondApproval(approval, outcome)
+        }, isCurrent = {
+            pendingApprovals[approval.approvalId]?.let { it.generation == approval.generation && it.rpcId == approval.rpcId } == true
+        }) { pendingApprovals.remove(approval.approvalId) }
+    }
+
+    private fun answerQuestion(question: PendingQuestion) {
+        val draft = questionDrafts.getOrPut(question.key) { QuestionDraft() }
+        val answers = question.questions.map { item ->
+            val custom = draft.custom[item.id]?.trim()?.takeIf(String::isNotBlank)
+            UserQuestionAnswerItem(item.id, draft.selected[item.id].orEmpty().toList(), custom)
+        }
+        if (answers.any { it.selected.isEmpty() && it.custom.isNullOrBlank() }) {
+            interactionErrors[question.key] = tr("请回答每个问题后再提交", "Answer every question before submitting")
+            renderComposerSeat()
+            return
+        }
+        submitInteraction(question.key, { api.respondQuestion(question, answers) }, isCurrent = { questionIsCurrent(question) }) {
+            pendingQuestions.remove(question.key)
+            questionDrafts.remove(question.key)
+        }
+    }
+
+    private fun cancelQuestion(question: PendingQuestion) {
+        if (question.state == "continued") {
+            hiddenQuestions.add(question.key)
+            renderComposerSeat()
+            return
+        }
+        submitInteraction(question.key, { api.cancelQuestion(question) }, isCurrent = { questionIsCurrent(question) }) {
+            pendingQuestions.remove(question.key)
+            questionDrafts.remove(question.key)
+        }
+    }
+
+    private fun questionIsCurrent(question: PendingQuestion): Boolean = pendingQuestions[question.key]?.let {
+        it.generation == question.generation && it.eventId == question.eventId && it.rpcId == question.rpcId
+    } == true
+
+    private fun submitInteraction(key: String, submit: () -> Unit, isCurrent: () -> Boolean, settle: () -> Unit) {
         val generation = streamGeneration
-        if (approvalResponding) return
-        approvalResponding = true
+        if (!interactionResponding.add(key)) return
+        interactionErrors.remove(key)
+        hideKeyboard()
         renderComposerSeat()
         worker.execute {
             try {
-                api.respondApproval(approval, outcome)
+                submit()
                 mainHandler.post {
                     if (generation != streamGeneration) return@post
-                    if (pendingApprovalsBySession[approval.sessionId]?.approvalId == approval.approvalId) {
-                        pendingApprovalsBySession.remove(approval.sessionId)
-                        approvalResponding = false
-                        renderComposerSeat()
-                    }
+                    if (isCurrent()) settle()
+                    interactionResponding.remove(key)
+                    renderComposerSeat()
+                    if (::sessionList.isInitialized && drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                     refresh(showSpinner = false)
                 }
             } catch (error: Exception) {
                 mainHandler.post {
                     if (generation != streamGeneration) return@post
-                    approvalResponding = false
+                    interactionResponding.remove(key)
+                    if (isCurrent()) interactionErrors[key] = error.message ?: tr("提交失败，请重试", "Could not submit. Try again.")
                     renderComposerSeat()
-                    Toast.makeText(this, error.message ?: tr("审批响应失败", "Approval response failed"), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -2163,7 +2429,12 @@ class MainActivity : ComponentActivity() {
             currentModels = null
             currentModelsLoadedAt = 0L
             currentControls = HarnessApi.SessionControls()
-            pendingApprovalsBySession.clear()
+            pendingApprovals.clear()
+            pendingQuestions.clear()
+            questionDrafts.clear()
+            selectedInteraction.clear()
+            hiddenQuestions.clear()
+            interactionErrors.clear()
             lastMessages = emptyList()
             lastRenderedRows = emptyList()
             lastRenderedRunning = false
@@ -2274,10 +2545,19 @@ class MainActivity : ComponentActivity() {
                     currentControls = history?.controls ?: HarnessApi.SessionControls()
                     currentStats = history?.stats ?: HarnessApi.ConversationStats()
                     currentTodos = history?.todos.orEmpty()
+                    selected?.id?.let { sessionId ->
+                        val projected = history?.questions.orEmpty()
+                        val activeKeys = projected.map { it.key }.toSet()
+                        pendingQuestions.entries.removeAll { (key, item) ->
+                            item.sessionId == sessionId && item.state == "continued" && key !in activeKeys
+                        }
+                        projected.forEach { pendingQuestions[it.key] = it }
+                    }
                     currentContextUsage = history?.contextUsage
                     runningStartedAt = if (selected?.running == true) {
                         history?.runningStartedAt ?: keptStart ?: System.currentTimeMillis()
                     } else null
+                    if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                     renderHeader()
                     renderControls()
                     renderStats()
@@ -2325,6 +2605,7 @@ class MainActivity : ComponentActivity() {
         refreshQueuedFull = false
         api.watchSession(session.id)
         currentSession = session
+        renderComposerSeat()
         currentModels = null
         currentModelsLoadedAt = 0L
         currentControls = HarnessApi.SessionControls()
@@ -2368,7 +2649,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        permissionButton.visibility = if (currentControls.permission == null) View.GONE else View.VISIBLE
+        val childSession = currentSession?.origin == "subagent"
+        modelButton.isEnabled = !childSession
+        permissionButton.visibility = if (childSession || currentControls.permission == null) View.GONE else View.VISIBLE
         permissionButton.text = permissionLabel(currentControls.permission)
         permissionButton.setCompoundDrawablesWithIntrinsicBounds(
             permissionIcon(currentControls.permission),
@@ -3420,6 +3703,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         val sentToServer = serverUrl
+        if (session.origin == "subagent") return
         val text = composer.text.toString().trim()
         if (text.isEmpty()) return
         val submissionId = promptSubmission.begin(sentToServer.orEmpty(), session.id, text, promptMode)
@@ -3512,8 +3796,17 @@ class MainActivity : ComponentActivity() {
 
     private fun renderSessionList() {
         sessionList.removeAllViews()
+        val pendingSessionIds = (pendingApprovals.values.map { it.sessionId } + pendingQuestions.values.map { it.sessionId }).distinct()
+        if (pendingSessionIds.isNotEmpty()) {
+            sessionList.addView(interactionText(tr("待处理请求", "Pending requests"), true).apply { setPadding(dp(16), dp(8), dp(16), dp(8)) })
+            pendingSessionIds.forEach { id ->
+                val session = sessions.firstOrNull { it.id == id }
+                    ?: HarnessApi.Session(id, tr("待确认来源 · ${id.take(12)}", "Resolving source · ${id.take(12)}"), null, null, System.currentTimeMillis(), true, false)
+                sessionList.addView(sessionRow(session, pendingSection = true))
+            }
+        }
         val query = drawerSearchQuery.trim()
-        val orderedSessions = sessions.filterNot { it.blank }.let {
+        val orderedSessions = sessions.filter { !it.blank || pendingKeys(it.id).isNotEmpty() }.let {
             if (drawerOrderLastUpdated) it.sortedByDescending { session -> session.updatedAt } else it
         }
         val matchedWorkspacePaths = drawerWorkspaces.filter {
@@ -3588,7 +3881,8 @@ class MainActivity : ComponentActivity() {
             }
     }
 
-    private fun sessionRow(session: HarnessApi.Session) = LinearLayout(this).apply {
+    private fun sessionRow(session: HarnessApi.Session, pendingSection: Boolean = false) = LinearLayout(this).apply {
+        contentDescription = "${if (pendingSection) tr("待处理请求", "Pending requests") else tr("会话", "Session")}: ${session.title ?: session.id}"
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(34), 0, dp(10), 0)
@@ -3596,11 +3890,20 @@ class MainActivity : ComponentActivity() {
         isClickable = true
         isFocusable = true
         setOnClickListener {
+            val latest = sessions.firstOrNull { it.id == session.id }
+            if (latest == null || !api.isSessionAddressResolved(session.id)) {
+                refresh(showSpinner = false)
+                Toast.makeText(this@MainActivity, tr("正在刷新请求来源，请稍后重试", "Refreshing the request source. Try again shortly."), Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             manuallyExpandedWorkspaceKeys.clear()
             closeDrawer()
-            selectSession(session)
+            selectSession(latest)
         }
-        setOnLongClickListener { showSessionActions(session); true }
+        setOnLongClickListener {
+            sessions.firstOrNull { it.id == session.id }?.let(::showSessionActions)
+            true
+        }
         addView(TextView(this@MainActivity).apply {
             text = session.title ?: session.cwd?.substringAfterLast('/') ?: tr("未命名", "Untitled")
             textSize = 14f
@@ -3612,13 +3915,14 @@ class MainActivity : ComponentActivity() {
             includeFontPadding = false
         }, LinearLayout.LayoutParams(0, MATCH, 1f))
         addView(TextView(this@MainActivity).apply {
-            text = relativeSessionAge(session.updatedAt)
+            val count = pendingKeys(session.id).size
+            text = if (count > 0) tr("待处理 $count", "Pending $count") else relativeSessionAge(session.updatedAt)
             textSize = 12f
-            setTextColor(COLOR_DRAWER_TERTIARY)
+            setTextColor(if (count > 0) COLOR_AMBER else COLOR_DRAWER_TERTIARY)
             gravity = Gravity.CENTER_VERTICAL
             includeFontPadding = false
         }, LinearLayout.LayoutParams(WRAP, MATCH).apply { marginStart = dp(8) })
-        layoutParams = LinearLayout.LayoutParams(MATCH, dp(32))
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(48))
     }
 
     private fun relativeSessionAge(value: Long): String {
@@ -3633,6 +3937,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showSessionActions(session: HarnessApi.Session) {
+        if (session.origin == "subagent" || !api.isSessionAddressResolved(session.id)) return
         AlertDialog.Builder(this)
             .setTitle(session.title ?: tr("会话操作", "Session actions"))
             .setItems(arrayOf(tr("重命名", "Rename"), tr("Fork 会话", "Fork session"))) { _, which ->
@@ -3724,6 +4029,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showModels() {
+        if (currentSession?.origin == "subagent") return
         val session = currentSession ?: run {
             maybeCheckProviderOnboarding(force = true) { showNewSession() }
             return
@@ -4429,6 +4735,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun cancelCurrent() {
+        if (currentSession?.origin == "subagent") return
         val id = currentSession?.id ?: return
         worker.execute {
             try {
@@ -4695,12 +5002,15 @@ class MainActivity : ComponentActivity() {
                                         toolName = frame.optString("toolName", "tool"),
                                         callId = frame.optNullableString("callId"),
                                         reason = frame.optNullableString("reason"),
+                                        displayReason = frame.optJSONObject("displayReason"),
+                                        generation = frame.optLong("generation"),
                                     )
                                     mainHandler.post {
                                         if (generation != streamGeneration) return@post
-                                        pendingApprovalsBySession[sessionId] = approval
-                                        approvalResponding = false
+                                        pendingApprovals[approval.approvalId] = approval
+                                        if (sessions.none { it.id == sessionId }) refresh(showSpinner = false)
                                         if (sessionId == currentSession?.id) renderComposerSeat()
+                                        if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                                     }
                                 }
                             }
@@ -4708,14 +5018,49 @@ class MainActivity : ComponentActivity() {
                                 val approvalId = frame.optNullableString("approvalId")
                                 mainHandler.post {
                                     if (generation != streamGeneration) return@post
-                                    val pending = pendingApprovalsBySession[sessionId]
-                                    if (pending != null && (approvalId == null || pending.approvalId == approvalId)) {
-                                        pendingApprovalsBySession.remove(sessionId)
-                                        approvalResponding = false
-                                        if (sessionId == currentSession?.id) renderComposerSeat()
-                                    }
+                                    val ids = pendingApprovals.values.filter {
+                                        it.sessionId == sessionId && (approvalId == null || it.approvalId == approvalId)
+                                    }.map { it.approvalId }
+                                    ids.forEach { pendingApprovals.remove(it); interactionResponding.remove(it); interactionErrors.remove(it) }
+                                    if (sessionId == currentSession?.id) renderComposerSeat()
+                                    if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                                 }
                             }
+                            "question/requested" -> parsePendingQuestion(frame)?.let { question ->
+                                mainHandler.post {
+                                    if (generation != streamGeneration) return@post
+                                    pendingQuestions[question.key] = question
+                                    if (sessions.none { it.id == question.sessionId }) refresh(showSpinner = false)
+                                    hiddenQuestions.remove(question.key)
+                                    if (question.sessionId == currentSession?.id) renderComposerSeat()
+                                    if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
+                                }
+                            }
+                            "question/resolved" -> mainHandler.post {
+                                if (generation != streamGeneration) return@post
+                                val eventId = frame.optNullableString("eventId")
+                                val callId = frame.optNullableString("callId")
+                                val keys = pendingQuestions.values.filter { question ->
+                                    question.sessionId == sessionId &&
+                                        (if (eventId != null) question.eventId == eventId else callId != null && question.callId == callId)
+                                }.map { it.key }
+                                keys.forEach { key ->
+                                    pendingQuestions.remove(key)
+                                    interactionResponding.remove(key)
+                                    interactionErrors.remove(key)
+                                }
+                                if (sessionId == currentSession?.id) renderComposerSeat()
+                                if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
+                            }
+                            "question/projection" -> parsePendingQuestion(frame)?.let { question ->
+                                mainHandler.post {
+                                    if (generation != streamGeneration) return@post
+                                    pendingQuestions[question.key] = question
+                                    if (question.sessionId == currentSession?.id) renderComposerSeat()
+                                    if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
+                                }
+                            }
+
                         }
                         if (sessionId == currentSession?.id && frame.optString("type") in LIVE_SESSION_FRAMES) {
                             mainHandler.post {
@@ -4755,8 +5100,9 @@ class MainActivity : ComponentActivity() {
 
     private fun stopMuxStream() {
         streamGeneration += 1
-        pendingApprovalsBySession.clear()
-        approvalResponding = false
+        pendingApprovals.clear()
+        pendingQuestions.entries.removeAll { it.value.state != "continued" }
+        interactionResponding.clear()
         if (::normalComposerCard.isInitialized) renderComposerSeat()
         api.closeMux()
         mainHandler.removeCallbacks(liveRefresh)

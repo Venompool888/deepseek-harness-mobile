@@ -5,7 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** One follow generation. A fresh opening replaces all state; gaps require reopening. */
-internal class HarnessSessionState {
+internal class HarnessSessionState(private val address: HarnessSessionAddress? = null) {
     private var records = mutableListOf<JSONObject>()
     private var cursor = -1L
     private var revision = -1L
@@ -78,7 +78,8 @@ internal class HarnessSessionState {
     @Synchronized fun pageRequest(sessionId: String): JSONObject {
         if (!ready) throw IOException("History is still synchronizing")
         val earliest = records.minOfOrNull { it.getJSONObject("event").getLong("seq") } ?: cursor
-        return JSONObject().put("address", JSONObject().put("kind", "session").put("sessionId", sessionId))
+        return JSONObject().put("address", address?.toJson()
+            ?: JSONObject().put("kind", "session").put("sessionId", sessionId))
             .put("throughSeq", cursor).put("beforeSeq", earliest).put("maxMessages", 80)
     }
     @Synchronized fun prependPage(page: JSONObject) {
