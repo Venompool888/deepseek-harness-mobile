@@ -1,0 +1,1 @@
+{"type":"snapshot","cursor":1,"records":[{"type":"event","event":{"seq":1,"time":100,"type":"user/message","surfaceOp":"append","data":{"source":{"kind":"user"},"content":[{"type":"text","text":"Synthetic fixture"}]}}}],"hasMore":false,"projections":{"asOfSeq":1,"values":{}},"assistantStream":{"revision":0}}

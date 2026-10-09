@@ -4,4 +4,17 @@
     <color name="deepseek_navy">#0B1F33</color>
     <color name="deepseek_blue">#2563EB</color>
     <color name="white">#FFFFFF</color>
+
+    <!-- Material 3 fallback roles; the in-app Harness palette remains the product source. -->
+    <color name="material_primary">#416FE6</color>
+    <color name="material_on_primary">#FFFFFF</color>
+    <color name="material_primary_container">#DCE5FF</color>
+    <color name="material_on_primary_container">#001A42</color>
+    <color name="material_surface">#FFFFFF</color>
+    <color name="material_surface_container">#F5F6F7</color>
+    <color name="material_on_surface">#0F1115</color>
+    <color name="material_on_surface_variant">#61666B</color>
+    <color name="material_outline">#75777D</color>
+    <color name="material_error">#BA1A1A</color>
+    <color name="material_on_error">#FFFFFF</color>
 </resources>

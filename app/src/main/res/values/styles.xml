@@ -1,12 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DeepSeekRemote" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.DeepSeekRemote.Base" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">@color/app_background</item>
-        <item name="android:colorAccent">@color/deepseek_blue</item>
-        <item name="android:navigationBarColor">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">@color/material_surface</item>
+        <item name="colorPrimary">@color/material_primary</item>
+        <item name="colorOnPrimary">@color/material_on_primary</item>
+        <item name="colorPrimaryContainer">@color/material_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/material_on_primary_container</item>
+        <item name="colorSurface">@color/material_surface</item>
+        <item name="colorSurfaceContainer">@color/material_surface_container</item>
+        <item name="colorOnSurface">@color/material_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/material_on_surface_variant</item>
+        <item name="colorOutline">@color/material_outline</item>
+        <item name="colorError">@color/material_error</item>
+        <item name="colorOnError">@color/material_on_error</item>
+        <item name="android:colorAccent">@color/material_primary</item>
+        <item name="android:navigationBarColor">@color/material_surface</item>
+        <item name="android:statusBarColor">@color/material_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.DeepSeek.Small</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.DeepSeek.Medium</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.DeepSeek.Large</item>
+    </style>
+
+    <style name="Theme.DeepSeekRemote" parent="Theme.DeepSeekRemote.Base" />
+
+    <style name="ShapeAppearance.DeepSeek.Small" parent="ShapeAppearance.Material3.Corner.Small">
+        <item name="cornerSize">10dp</item>
+    </style>
+
+    <style name="ShapeAppearance.DeepSeek.Medium" parent="ShapeAppearance.Material3.Corner.Medium">
+        <item name="cornerSize">16dp</item>
+    </style>
+
+    <style name="ShapeAppearance.DeepSeek.Large" parent="ShapeAppearance.Material3.Corner.Large">
+        <item name="cornerSize">24dp</item>
     </style>
 </resources>
