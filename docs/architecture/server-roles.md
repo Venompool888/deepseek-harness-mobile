@@ -48,6 +48,7 @@ flowchart LR
 | `--upstream` | dsh 服务端的回环 origin，供 dshbridge 向上游连接 |
 | `--public-origin` | dshbridge 服务端供客户端访问的 origin；公网部署使用实际 HTTPS 地址 |
 | `--dsh-token-file` | 包含 dsh 原生启动 token 的私有文件，供 dshbridge 内部认证使用 |
+| `--dsh-cookie-file` | 指定现有 dsh Host 的原生 Cookie 私有文件；与 token 文件互斥 |
 | 手机配对资料中的 `origin`、`pairPath` | dshbridge 服务端地址及随机配对入口 |
 | `pair` / `devices` / `revoke` | dshbridge 的本地设备管理命令 |
 | 手机的设备 token | 向 dshbridge 认证，和内部 dsh 启动 token / Cookie 分开管理 |
@@ -62,3 +63,9 @@ flowchart LR
 组件名称统一为 **dshbridge**。当前 CLI 命令和可执行文件仍是 `dsh-bridge`、`dsh-bridge-<platform>-<arch>`，源码入口是 `bridge/cmd/dsh-bridge/`；这些名称都属于 dshbridge 服务端。执行现有命令时使用实际文件名。
 
 详细命令、认证流程和部署限制见 [dshbridge 操作说明](../../bridge/README.md)，本机验证结果见 [验收记录](../qa/private-transport/validation.md)。
+
+## 同一原生版本的不同 Host 实例
+
+审批和前台问答属于发出请求的原生 dsh Host 进程。单独启动 Web Host 与 Desktop 内置 Host 会有不同的实时事件队列；版本相同不代表它们共享正在等待的审批。Android 要处理 Desktop 里的任务，dshbridge 的 `upstream` 必须指向那个 Desktop Host，并使用该 Host 的内部认证。
+
+2026-10-10 的交互补齐验收发现：原先局域网 dshbridge 连接的是独立 Web Host `127.0.0.1:3080`，而截图任务属于 Desktop Host `127.0.0.1:19387`。本轮改用后者及它的现有 Cookie。端口来自本机实际运行的 Desktop profile，不能当作所有安装的固定端口。手机到 dshbridge 的设备认证与随机路径继续独立维护。详细结果见 [交互验收记录](../qa/interaction-parity/validation.md)。

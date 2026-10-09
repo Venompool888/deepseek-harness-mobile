@@ -1,0 +1,29 @@
+{
+  "suites": 23,
+  "tests": 96,
+  "failures": 0,
+  "errors": 0,
+  "lint": {
+    "Warning": 85
+  },
+  "sha256": {
+    "dsh-interactions-lan-debug.apk": "7b94804d445f8410c56e8548783294f88f4fa4c688e5a8d1626c723852308aaa",
+    "dsh-interactions-standard-debug.apk": "02ba638dd994b6171a4e9f3998bdfd380ece1ee84162f4c494fa93cef951e119",
+    "dsh-bridge": "eea136b16c0fbe15843f6df0a4097c227a0f3acd4f24d30c56dcfc5960c0fa92"
+  },
+  "installedVersion": "1.1.1-debug",
+  "versionCode": 7,
+  "testedWorktree": "/Users/yuri/.codex/worktrees/dsh-rc2-core/deepseek_harness_android",
+  "sourceCommit": "737422cb5a872dfc256023903b5e2d0328e8ad83",
+  "sourceSha256": {
+    "app/build.gradle.kts": "05bf54202fdb385db69ffa2482ee6378bb1293b117420baec5c462d5ac53bff3",
+    "app/src/main/java/app/deepseek/harness/mobile/HarnessApi.kt": "43f27752fcdb277b23a00d53412041559f3be9bbece7b4b141d5f59693a67cf2",
+    "app/src/main/java/app/deepseek/harness/mobile/HarnessInteractions.kt": "d3a5b2af9bb6627d3b7e81adabcfdf2b44dd262b7d8739bd2769973f8616a0ac",
+    "app/src/main/java/app/deepseek/harness/mobile/HarnessRemoteEvents.kt": "e18a07e23345b1f75b21f7a1ca7eab023696d29b4071f5b8f29ec1ec980d08e5",
+    "app/src/main/java/app/deepseek/harness/mobile/HarnessSessionAddress.kt": "b5afabe4277a1de97d4cea7cf3006bedb10887df05a79223e053e877d7d27433",
+    "app/src/main/java/app/deepseek/harness/mobile/HarnessSessionState.kt": "7e25be4b5bbf93e04fe5d8d8078e617497ad00b37113b6c7326cb3f02f86d3d4",
+    "app/src/main/java/app/deepseek/harness/mobile/MainActivity.kt": "17d89268495bc84df3c5266554a906cb2533695890572b4172a0cd9f1ed94af4",
+    "app/src/test/java/app/deepseek/harness/mobile/HarnessDeferredEventTest.kt": "ff56b0dadc8f5e4d8057d20641605f15a896d52d252a47536760adebce52f14a",
+    "app/src/test/java/app/deepseek/harness/mobile/HarnessRc2Test.kt": "d3d97797dc79b6bbbdd34672907342169f10ecdce7badefc6853922f6e3a10a8"
+  }
+}

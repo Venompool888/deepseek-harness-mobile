@@ -1,4 +1,6 @@
 <p align="center">
+
+> 2026-10-10 本机开发进展：Android `1.1.1-debug` 已补齐 rc.2 审批、问答、计划决定与继续问答，并安装到 Pixel 验证。当前发布下载说明仍对应已发布的 v1.1.0；1.1.1 本轮为本机 Debug 交付。详见 [交互补齐验收](docs/qa/interaction-parity/validation.md)。
   <img src="design/android-whale-logo-white.png" width="260" alt="DeepSeek Harness Mobile logo">
 </p>
 

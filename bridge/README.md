@@ -13,6 +13,7 @@ dshbridge preserves dsh 0.2.0-rc.2 message formats. Random routes are stable dsh
 | `--upstream` | Native dsh server's loopback origin |
 | `--public-origin`, phone configuration `origin` | dshbridge server's client-facing origin; public deployment requires HTTPS |
 | `--dsh-token-file` | Native dsh launch token used internally by dshbridge |
+| `--dsh-cookie-file` | Existing native dsh Cookie for the selected loopback Host; mutually exclusive with token file |
 | `pair`, `devices`, `revoke`, device token, `routes.json` | dshbridge device access and random routes |
 
 Start the loopback dsh server, then configure/start dshbridge and pair the phone. The two processes are maintained separately; dshbridge does not manage the dsh process. Private server mode in Android means dshbridge; Direct connection means native dsh. Native Web management is accessed locally on the dsh server host.
@@ -71,3 +72,13 @@ Each request/frame validates its credential. Idle WS revocation checks run every
 Android's Private server mode is the default pairing flow; Direct connection remains available for explicit local/native connections. Forgetting a private profile invalidates its work and credentials and requires fresh pairing. Export uses the system file picker on every supported Android version. Native dsh Web management stays on the dsh server host in private mode. A failed private connection never falls back to native dsh routes.
 
 No public domain, certificate, reverse proxy, firewall rule, installer, or process supervisor is provisioned by this repository. Deploy dshbridge with your own trusted TLS certificate or an isolated TLS reverse proxy, and keep the native dsh server listener on loopback. External exposure still needs to be verified on that actual host.
+
+## Connect to the same native Host as Desktop
+
+Pending approvals and foreground questions belong to a running native dsh Host. A separately started Web Host does not share another Host's live interaction queue, even when both installations use the same dsh version. Set `config.json`'s `upstream` to the loopback origin of the Host that owns the task. The Desktop rc.2 Host observed in this validation listens on `127.0.0.1:19387`; this is an observed profile configuration, not a universal discovery rule. A separately started Web Host had used `127.0.0.1:3080`.
+
+For an already authenticated Desktop Host, use `dsh-bridge serve --state DIR --dsh-cookie-file PRIVATE_COOKIE_FILE` with the same TLS flags as the deployment. The private file contains one native `name=value` Cookie, at most 4096 bytes, for that exact upstream authority. dshbridge rejects a mismatched Cookie name, extra cookies, header separators and simultaneous token/cookie options. Keep the file outside the repository with access limited to its owner. The Cookie stays inside dshbridge; Android continues to use its separate device credential.
+
+A fixed Cookie does not refresh itself. If Desktop invalidates it, requests fail and keep presenting that Cookie until the operator replaces it and restarts dshbridge. There is no anonymous fallback. Keep the native dsh listener on loopback and restart only dshbridge when changing its upstream authentication.
+
+The interaction allowlist includes `$events/result`, `userQuestions/answer`, `$events` and `userQuestions/attachWait` alongside the existing session streams. It does not expose native administration or a pending-events discovery endpoint.
