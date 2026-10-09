@@ -18,9 +18,9 @@ import (
 )
 
 type Client struct {
-	origin, launchToken, cookie string
-	http                        *http.Client
-	mu                          sync.Mutex
+	origin, launchToken, cookie, fixedCookie string
+	http                                     *http.Client
+	mu                                       sync.Mutex
 }
 
 func New(origin, launchToken string) (*Client, error) {
@@ -28,9 +28,20 @@ func New(origin, launchToken string) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	u, _ := url.Parse(o)
+	dialAddress := upstreamDialAddress(o)
+	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, dialAddress)
+	}, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
+	return &Client{origin: o, launchToken: launchToken, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+}
+
+// upstreamDialAddress pins every case variant of localhost to IPv4 loopback.
+// Origin validation is case-insensitive, so the dial target must be too.
+func upstreamDialAddress(origin string) string {
+	u, _ := url.Parse(origin)
 	host := u.Hostname()
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		host = "127.0.0.1"
 	}
 	port := u.Port()
@@ -40,12 +51,43 @@ func New(origin, launchToken string) (*Client, error) {
 			port = "443"
 		}
 	}
-	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
-	}, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
-	return &Client{origin: o, launchToken: launchToken, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return net.JoinHostPort(host, port)
 }
+
+// NewWithCookie connects to an already authenticated Desktop Host. The cookie
+// remains private to this loopback client and must match the upstream authority.
+func NewWithCookie(origin, cookie string) (*Client, error) {
+	c, err := New(origin, "")
+	if err != nil {
+		return nil, err
+	}
+	name := authCookieName(c.origin)
+	prefix := name + "="
+	if !strings.HasPrefix(cookie, prefix) || len(cookie) > 4096 {
+		return nil, errors.New("invalid dsh cookie file")
+	}
+	value := strings.TrimPrefix(cookie, prefix)
+	if value == "" || strings.ContainsAny(value, "\r\n; \t") {
+		return nil, errors.New("invalid dsh cookie file")
+	}
+	c.fixedCookie = cookie
+	return c, nil
+}
+
+// URL authority normalization matches the native URL implementation.
+func authCookieName(origin string) string {
+	u, _ := url.Parse(origin)
+	authority := strings.ToLower(u.Host)
+	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
+		authority = strings.ToLower(u.Hostname())
+		if strings.Contains(authority, ":") {
+			authority = "[" + authority + "]"
+		}
+	}
+	sum := sha256.Sum256([]byte(authority))
+	return "dsh-auth-" + base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 func (c *Client) WSURL() string {
 	return strings.Replace(strings.Replace(c.origin, "https://", "wss://", 1), "http://", "ws://", 1) + "/api/remote.mux"
 }
@@ -54,6 +96,10 @@ func (c *Client) Headers() (http.Header, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	h := http.Header{}
+	if c.fixedCookie != "" {
+		h.Set("Cookie", c.fixedCookie)
+		return h, nil
+	}
 	if c.launchToken == "" {
 		return h, nil
 	}
@@ -74,16 +120,7 @@ func (c *Client) Headers() (http.Header, error) {
 		if resp.StatusCode != 303 || e != nil || loc.Scheme != base.Scheme || loc.Host != base.Host || loc.Path != "/" || loc.RawQuery != "" || loc.Fragment != "" {
 			return nil, errors.New("internal authentication unavailable")
 		}
-		u, _ := url.Parse(c.origin)
-		authority := strings.ToLower(u.Host)
-		if u.Port() == "80" {
-			authority = u.Hostname()
-			if strings.Contains(authority, ":") {
-				authority = "[" + authority + "]"
-			}
-		}
-		sum := sha256.Sum256([]byte(authority))
-		name := "dsh-auth-" + base64.RawURLEncoding.EncodeToString(sum[:])
+		name := authCookieName(c.origin)
 		for _, cookie := range resp.Cookies() {
 			if cookie.Name == name {
 				c.cookie = cookie.Name + "=" + cookie.Value

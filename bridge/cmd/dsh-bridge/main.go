@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -27,6 +28,7 @@ func run(args []string) error {
 	key := fs.String("tls-key", "", "TLS key file")
 	proxy := fs.Bool("behind-tls-proxy", false, "TLS proxy on same host only")
 	tokenFile := fs.String("dsh-token-file", "", "private file with dsh launch token")
+	cookieFile := fs.String("dsh-cookie-file", "", "private file with an existing dsh Host authentication cookie")
 	origin := fs.String("public-origin", "http://127.0.0.1:3090", "client origin")
 	if e := fs.Parse(args[1:]); e != nil {
 		return e
@@ -65,6 +67,9 @@ func run(args []string) error {
 		}
 		return store.Revoke(*device)
 	case "serve":
+		if *tokenFile != "" && *cookieFile != "" {
+			return fmt.Errorf("choose one dsh authentication file")
+		}
 		c, e := config.Load(*state)
 		if e != nil {
 			return e
@@ -88,6 +93,18 @@ func run(args []string) error {
 			}
 		}
 		up, e := upstream.New(c.Upstream, token)
+		if *cookieFile != "" {
+			f, err := os.Open(*cookieFile)
+			if err != nil {
+				return fmt.Errorf("unable to read dsh cookie file")
+			}
+			b, err := io.ReadAll(io.LimitReader(f, 4097))
+			f.Close()
+			if err != nil || len(b) > 4096 {
+				return fmt.Errorf("invalid dsh cookie file")
+			}
+			up, e = upstream.NewWithCookie(c.Upstream, strings.TrimSpace(string(b)))
+		}
 		if e != nil {
 			return e
 		}

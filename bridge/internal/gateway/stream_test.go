@@ -106,6 +106,24 @@ func TestStreamInvalidEndpoint(t *testing.T) {
 	}
 }
 
+func TestUserQuestionInteractionEndpointsAreNarrowlyAllowed(t *testing.T) {
+	for _, endpoint := range []string{"userQuestions/attachWait"} {
+		frame := `{"type":"open","streamId":"q1","endpoint":"` + endpoint + `","payload":{"args":{"agentId":"s1","callId":"call-1"}}}`
+		if !validFrame([]byte(frame)) {
+			t.Fatalf("rc.2 question stream endpoint rejected: %s", endpoint)
+		}
+	}
+	for _, endpoint := range []string{"userQuestions", "userQuestions/answer", "userQuestions/attachWaitAnything"} {
+		frame := `{"type":"open","streamId":"q2","endpoint":"` + endpoint + `","payload":{"args":{}}}`
+		if validFrame([]byte(frame)) {
+			t.Fatalf("unexpected question stream endpoint allowed: %s", endpoint)
+		}
+	}
+	if !allowedRPC["userQuestions/answer"] || allowedRPC["userQuestions/attachWait"] {
+		t.Fatal("question RPC allowlist is not method-specific")
+	}
+}
+
 func TestRevokeDuringUpstreamWSHandshake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

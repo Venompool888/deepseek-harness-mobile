@@ -61,3 +61,70 @@ func TestRedirectRefused(t *testing.T) {
 		t.Fatal("followed redirect")
 	}
 }
+
+func TestExistingDesktopCookieNeverExchangesOrFallsBack(t *testing.T) {
+	requests := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path == "/" || r.URL.RawQuery != "" {
+			t.Error("attempted token exchange")
+		}
+		sum := sha256.Sum256([]byte(r.Host))
+		expected := "dsh-auth-" + base64.RawURLEncoding.EncodeToString(sum[:]) + "=existing-desktop-cookie"
+		if r.Header.Get("Cookie") != expected {
+			t.Error("lost authenticated cookie")
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer s.Close()
+	sum := sha256.Sum256([]byte(strings.TrimPrefix(s.URL, "http://")))
+	cookie := "dsh-auth-" + base64.RawURLEncoding.EncodeToString(sum[:]) + "=existing-desktop-cookie"
+	c, err := NewWithCookie(s.URL, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err = c.RPC(context.Background(), []byte(`{"method":"session/list"}`)); err == nil {
+			t.Fatal("accepted expired cookie")
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("unexpected exchange count %d", requests)
+	}
+	for _, invalid := range []string{"dsh-auth-wrong=value", cookie + "; other=value", cookie + "\r\nX-Test: secret", strings.Split(cookie, "=")[0] + "="} {
+		if _, err := NewWithCookie(s.URL, invalid); err == nil {
+			t.Fatal("accepted invalid cookie")
+		}
+	}
+}
+
+func TestDesktopCookieAuthority(t *testing.T) {
+	for _, origins := range [][2]string{{"http://127.0.0.1", "http://127.0.0.1:80"}, {"https://localhost", "https://LOCALHOST:443"}, {"http://[::1]", "http://[::1]:80"}} {
+		if authCookieName(origins[0]) != authCookieName(origins[1]) {
+			t.Fatal("default port authority drift")
+		}
+		if _, err := NewWithCookie(origins[1], authCookieName(origins[0])+"=valid-cookie"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, origin := range []string{"http://192.168.10.101:19387", "http://example.com", "http://127.0.0.1:19388"} {
+		if _, err := NewWithCookie(origin, authCookieName("http://127.0.0.1:19387")+"=valid-cookie"); err == nil {
+			t.Fatal("accepted wrong origin")
+		}
+	}
+}
+
+func TestLocalhostCaseVariantsDialOnlyToIPv4Loopback(t *testing.T) {
+	for _, origin := range []string{
+		"http://localhost:19387",
+		"http://LOCALHOST:19387",
+		"http://LoCaLhOsT:19387",
+	} {
+		if got := upstreamDialAddress(origin); got != "127.0.0.1:19387" {
+			t.Fatalf("upstreamDialAddress(%q) = %q, want loopback pin", origin, got)
+		}
+	}
+	if got := upstreamDialAddress("http://127.0.0.2:19387"); got != "127.0.0.2:19387" {
+		t.Fatalf("IP loopback address changed unexpectedly: %q", got)
+	}
+}
