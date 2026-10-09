@@ -133,6 +133,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var drawerOverlay: FrameLayout
     private lateinit var drawerPanel: LinearLayout
     private lateinit var drawerToolbarHost: FrameLayout
+    private lateinit var pendingAttentionButton: android.widget.Button
     private lateinit var sessionList: LinearLayout
     private var commandPopup: PopupWindow? = null
 
@@ -657,6 +658,16 @@ class MainActivity : ComponentActivity() {
             visibility = View.GONE
         }
         page.addView(progress, LinearLayout.LayoutParams(MATCH, dp(2)))
+        pendingAttentionButton = approvalButton("", false, true) { showSessions() }.apply {
+            visibility = View.GONE
+            setTextColor(COLOR_AMBER)
+            background = ripple(roundedStroke(COLOR_CODE_SURFACE, COLOR_AMBER, 12f))
+            contentDescription = tr("查看其他会话的待处理请求", "Review pending requests in other sessions")
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        page.addView(pendingAttentionButton, LinearLayout.LayoutParams(MATCH, WRAP).apply {
+            setMargins(dp(12), dp(4), dp(12), dp(4))
+        })
         page.addView(buildMessages(), LinearLayout.LayoutParams(MATCH, 0, 1f))
         page.addView(buildComposer(), LinearLayout.LayoutParams(MATCH, WRAP))
         root.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -935,7 +946,19 @@ class MainActivity : ComponentActivity() {
     } ?: tr("待处理请求", "Pending request")
 
     private var renderedInteractionSignature = ""
+    private fun renderPendingAttention() {
+        if (!::pendingAttentionButton.isInitialized) return
+        val selectedId = currentSession?.id
+        val count = pendingApprovals.values.count { it.sessionId != selectedId } +
+            pendingQuestions.values.count { it.sessionId != selectedId }
+        pendingAttentionButton.visibility = if (count > 0) View.VISIBLE else View.GONE
+        if (count > 0) pendingAttentionButton.text = tr(
+            "其他会话有 $count 条待处理请求 · 查看", "Other sessions: $count pending requests · Review",
+        )
+    }
+
     private fun renderComposerSeat() {
+        renderPendingAttention()
         if (!::composerSeat.isInitialized || !::normalComposerCard.isInitialized) return
         val sessionId = currentSession?.id
         val allKeys = sessionId?.let(::pendingKeys).orEmpty()
@@ -5008,6 +5031,7 @@ class MainActivity : ComponentActivity() {
                                     mainHandler.post {
                                         if (generation != streamGeneration) return@post
                                         pendingApprovals[approval.approvalId] = approval
+                                        renderPendingAttention()
                                         if (sessions.none { it.id == sessionId }) refresh(showSpinner = false)
                                         if (sessionId == currentSession?.id) renderComposerSeat()
                                         if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
@@ -5022,6 +5046,7 @@ class MainActivity : ComponentActivity() {
                                         it.sessionId == sessionId && (approvalId == null || it.approvalId == approvalId)
                                     }.map { it.approvalId }
                                     ids.forEach { pendingApprovals.remove(it); interactionResponding.remove(it); interactionErrors.remove(it) }
+                                    renderPendingAttention()
                                     if (sessionId == currentSession?.id) renderComposerSeat()
                                     if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                                 }
@@ -5030,6 +5055,7 @@ class MainActivity : ComponentActivity() {
                                 mainHandler.post {
                                     if (generation != streamGeneration) return@post
                                     pendingQuestions[question.key] = question
+                                    renderPendingAttention()
                                     if (sessions.none { it.id == question.sessionId }) refresh(showSpinner = false)
                                     hiddenQuestions.remove(question.key)
                                     if (question.sessionId == currentSession?.id) renderComposerSeat()
@@ -5049,6 +5075,7 @@ class MainActivity : ComponentActivity() {
                                     interactionResponding.remove(key)
                                     interactionErrors.remove(key)
                                 }
+                                renderPendingAttention()
                                 if (sessionId == currentSession?.id) renderComposerSeat()
                                 if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                             }
@@ -5056,6 +5083,7 @@ class MainActivity : ComponentActivity() {
                                 mainHandler.post {
                                     if (generation != streamGeneration) return@post
                                     pendingQuestions[question.key] = question
+                                    renderPendingAttention()
                                     if (question.sessionId == currentSession?.id) renderComposerSeat()
                                     if (drawerOverlay.visibility == View.VISIBLE) renderSessionList()
                                 }
