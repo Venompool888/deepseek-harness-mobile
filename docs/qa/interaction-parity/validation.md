@@ -4,7 +4,7 @@
 
 ## 原因与修复
 
-Android 曾只接收当前选中 Session 的普通 approval，每个 Session 仅保存一条请求，其他来源被交给下一答复者；没有前台问答、计划确认、继续问答的原生面板。现在按事件 ID/稳定 call ID 分别缓存请求，保留所有会话，提供数量、切换和各自草稿。
+Android 曾只接收当前选中 Session 的普通 approval，每个 Session 仅保存一条请求，其他来源被交给下一答复者；没有前台问答、计划确认、继续问答的原生面板。现在按事件 ID/稳定 call ID 分别缓存请求，保留所有会话，提供数量、切换和各自草稿。其他会话或子 Agent 有待处理请求时，页头下方显示醒目入口；点击打开侧栏的待处理分组。该提示独立刷新，不重建当前问答卡，不自动选择或回答。
 
 局域网 dshbridge 原先连接独立 Web Host `127.0.0.1:3080`，截图任务却运行在 Desktop Host `127.0.0.1:19387`。实时 waterfall 不在两个 Host 之间共享；修复客户端之外还要让 bridge 连接拥有该任务的 Host。本轮新增严格绑定 authority 的 `--dsh-cookie-file`，支持已有 Desktop Cookie，同时保留 launch-token 模式。手机使用独立的 dshbridge 设备凭据，原生 Cookie 不发给手机。
 
@@ -47,11 +47,12 @@ rc.2 remotes 明确只转发两个上述 waterfall。原生提供者自行处理
 | 审批重放 | 最终包强制停止/重开，新的 clientId 收到同一待处理 event 并成功允许一次 |
 | timed → continued | 显示倒计时；超时切换、late cancel、隐藏/重开和 service answer 均通过；已选 Continue 保留；切换前后同一进程 PID 14681 |
 | 子 Agent | 合法子地址打开、命令关联、Reject 回传到 child ID，解决后仅显示只读说明 |
+| 其他会话提醒 | 最终包在 A 页收到 B 审批，页头显示 1 条并打开 B；随后在 B 页收到 child 审批，同样显示入口并打开 child。两次 Reject 均匹配正确 sessionId/eventId，解决后提醒隐藏；见 outcomes-attention.json |
 | 真实 Desktop 问答 | 隔离 QA Session 收到原生 ask_user_question，Pixel 提交“验收通过”，原生任务复述该选择并结束 |
 | 真实 Desktop 审批 | 同一 QA Session 请求只打印文本的 Bash escalation；Pixel 显示真实审批说明/命令，点击 Reject，原生任务确认拒绝且未重试、未执行 |
-| 真实 LAN 链路 | dshbridge PID 52248 的已建立 TCP peer 为 192.168.10.105；上游为 Desktop 127.0.0.1:19387；ADB reverse 列表为空 |
+| 真实 LAN 链路 | 最终 dshbridge PID 58111 的已建立 TCP peer 为 192.168.10.105；上游为 Desktop 127.0.0.1:19387；ADB reverse 列表为空 |
 
-合成记录第一阶段运行于首次面板包，最终 1.1.1 又复测了审批重放、子会话、plan change、字体/Activity 草稿恢复和 timed→continued 竞态。普通问答在真实 Desktop 上再验证了当前最终包。计划确认、多选及 timed 的真实 Host 发出/调度行为未逐一重新触发，覆盖来自 tagged 源码、单测与注入测试。
+合成记录第一阶段运行于首次面板包，1.1.1 面板包又复测了审批重放、子会话、plan change、字体/Activity 草稿恢复和 timed→continued 竞态，并在真实 Desktop 上验证问答与拒绝审批。最后只增加其他会话提醒，再实际重跑全部 96 项单测、lint、构建并验证根会话及子会话提醒；覆盖安装后已连回真实 Desktop QA 会话。计划确认、多选及 timed 的真实 Host 发出/调度行为未逐一重新触发，覆盖来自 tagged 源码、单测与注入测试。
 
 真实 QA 会话名为 `Android 交互验收 2026-10-10`，空工作区位于本机临时验收目录。未审批用户截图中原有任务。专用合成进程已停止；真实 Desktop 原有进程没有停止或重启。手机最后停在真实 QA 已完成会话，字体恢复为 1.0，输入法保持原微信输入法。
 
@@ -59,7 +60,7 @@ rc.2 remotes 明确只转发两个上述 waterfall。原生提供者自行处理
 
 局域网 dshbridge 保持运行在 `https://192.168.10.101:3090`，使用原设备配对和随机入口；上游是原生 Desktop Host `http://127.0.0.1:19387`。没有正式公网部署或开机启动。固定 Desktop Cookie 失效时需要管理员更新私有 Cookie 文件并重启 dshbridge，不会匿名降级。
 
-本机交付目录为项目的 `artifacts/interaction-parity-1.1.1/`（忽略，不提交），包含 LAN 专用 Debug APK、仅系统 CA 的普通 Debug APK和本机 macOS arm64 dshbridge。`final-checks.json` 记录精确版本、测试计数和 SHA-256；LAN APK 的 SHA-256 为 `7b94804d445f8410c56e8548783294f88f4fa4c688e5a8d1626c723852308aaa`。这些 APK 使用已有 Debug 签名，本轮未制作正式签名发行版。
+本机交付目录为项目的 `artifacts/interaction-parity-1.1.1/`（忽略，不提交），包含 LAN 专用 Debug APK、仅系统 CA 的普通 Debug APK和本机 macOS arm64 dshbridge。`final-checks.json` 记录精确版本、测试计数和 SHA-256；LAN APK 的 SHA-256 为 `96a040c445acb85b998f87027d973035dfc1f046928b0109b3ae0f24d69a2f3f`。这些 APK 使用已有 Debug 签名，本轮未制作正式签名发行版。
 
 当前私有服务状态、Cookie 与证书保存在用户 Library 下的 dshbridge 部署目录，未放入仓库。专用 CA debug overlay 已删除；源代码的正式信任配置只含系统 CA。`fixture-upstream.mjs`/`fixture-README.md` 可用于本地复现合成场景，任何 QA admin route 都不在 bridge allowlist。
 
@@ -67,7 +68,9 @@ rc.2 remotes 明确只转发两个上述 waterfall。原生提供者自行处理
 
 - [真实 Desktop 审批面板](pixel-native-approval.png) 与 [真实问答](pixel-native-question.png)，[原生任务确认回答/拒绝](pixel-native-result.png)。
 - [continued 面板](pixel-continued-final.png)、[子 Agent 审批](pixel-child-approval.png)、[子 Agent 只读](pixel-child-read-only.png)、[大字体计划面板](pixel-plan-large-font.png)。
+- [其他会话待处理提醒](pixel-other-session-attention.png)、[最终包连回真实 Desktop](pixel-final-desktop.png)。
 - 合成实际响应载荷：[第一阶段](outcomes-initial.json)、[最终包](outcomes-final.json)。
+- [最终提醒入口响应载荷](outcomes-attention.json)。
 - [构建与测试计数/校验和](final-checks.json)、[Android 执行日志](android-final.log)、[Go race 执行日志](go-final.log)。
 
-代码交付分支 `codex/android-interactions-rc2`。dshbridge 源码提交 `42fd791`，Android 源码提交 `737422c`；交付 APK 使用与该源码逐文件一致的已测试实现。
+代码交付分支 `codex/android-interactions-rc2`。dshbridge 源码提交 `42fd791`，Android 面板提交 `737422c`，提醒入口提交 `79f7852`；交付 APK 使用与该源码逐文件一致的已测试实现。
