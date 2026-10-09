@@ -1,14 +1,18 @@
-# Private dsh Transport Implementation Plan
+# dshbridge 与原生 dsh 服务端的私有传输实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
-**Goal:** 在不改变 Android 的 dsh 业务协议的前提下，实现带设备认证、每部署随机路径的通信壳，让未认证公网请求无法直接访问 dsh Web 页面和原生接口。
+**Goal:** 在不改变 Android 的 dsh 业务协议的前提下，实现带设备认证、每部署随机路径的 dshbridge，让未认证公网请求无法直接访问 dsh Web 页面和原生接口。
 
-**Architecture:** 新增与 dsh 同机运行的 Go 服务，配置一个固定回环上游；它承载原始 RPC 信封、Remote mux 帧和指定会话导出。Android 抽出传输边界，直连与通信壳作为明确的连接类型，前后台统一选择传输；通信壳错误不会回退直连。
+**Architecture:** 新增与 dsh 服务端同机运行的 Go 服务，配置一个固定回环上游；它承载原始 RPC 信封、Remote mux 帧和指定会话导出。Android 抽出传输边界，直连与 dshbridge 作为明确的连接类型，前后台统一选择传输；dshbridge 错误不会回退直连。
 
 **Tech Stack:** Go 1.26.x、标准库 net/http、github.com/coder/websocket v1.8.15；现有 Kotlin Views、OkHttp 4.12.0、org.json、Android Keystore。Go 版本由官方 https://go.dev/dl/ 核实补丁与校验和后安装到任务工具目录；WebSocket 版本依据 https://github.com/coder/websocket/releases/tag/v1.8.15。
 
 **Spec:** `/Users/yuri/Desktop/deepseek_harness_android/docs/superpowers/specs/2026-10-09-private-transport-design.md`
+
+## Server terminology
+
+**dsh 服务端**指原生 DeepSeek Harness；**dshbridge 服务端**指本计划在 `bridge/` 中实现的自研通信壳。Android 私有连接的目标是 dshbridge，dshbridge 的回环上游是 dsh。配对/设备凭据/随机路由在 dshbridge 管理；原生会话/模型/任务与 Web 在 dsh 管理。详见 [两个服务端的区分](../../architecture/server-roles.md)。现有 `dsh-bridge` 命令和路径属于 dshbridge。
 
 ## Global Constraints
 
@@ -18,10 +22,10 @@
 - 上游仅允许配置好的回环 origin，不接受客户端提供的目标，不跟随上游重定向。
 - 不提供 dsh HTML、JS/CSS、favicon、WebView 跳转、任意文件或任意路径转发。
 - 根路径、未知路径、固定 `/v1/*`、`/api/*` 和无效认证的真实路径返回统一的空 404；认证先于业务解析和 WS 升级。
-- 一次性配对凭据有效期 10 分钟；设备 token 为随机 256 位；服务端只保存 token 摘要。
+- 一次性配对凭据有效期 10 分钟；设备 token 为随机 256 位；dshbridge 服务端只保存 token 摘要。
 - 手机用 Android Keystore 保护持久凭据，按 origin 隔离；凭据不在 URL 查询参数、日志和错误里出现。
 - 路径更换需显式维护、重新分发和重新配对；本轮不做自动轮换或旧路径兼容。
-- Codex 子代理仅使用 GPT-6/6.1；前端设计通过 agy-subagent，禁止 agy 修改协议或服务端代码。
+- Codex 子代理仅使用 GPT-6/6.1；前端设计通过 agy-subagent，禁止 agy 修改协议或 dshbridge 服务端代码。
 - 保留已有未提交包名迁移、OAuth、主题和 rc.2 适配；不发布公网、不推送远端、不修改防火墙。
 
 ## Review Focus
@@ -30,11 +34,11 @@
 - 并发配对兑换只能成功一次；凭据存储失败不得返回成功，也不得留下可重用的半完成记录。
 - 网络中断或后台恢复后，旧连接的帧与凭据不能污染新服务器；变更操作不自动重试。
 - 设备撤销与建立 WS 并发时，不能留下仍可使用的已撤销连接。
-- 通信壳模式下导出、Web 管理入口和后台通知不能绕过传输层直接访问 dsh。
+- dshbridge 模式下导出、Web 管理入口和后台通知不能绕过传输层直接访问 dsh。
 
 ## Files and shared contracts
 
-服务端文件放在 `bridge/`，使用模块 `app.deepseek.harness/bridge`。`cmd/dsh-bridge/main.go` 只处理命令行；`internal/config/` 负责配置及路由；`internal/auth/` 负责设备状态；`internal/upstream/` 负责内部认证及 HTTP；`internal/gateway/` 负责外层路由、转发和 WS 生命周期。
+dshbridge 服务端文件放在 `bridge/`，使用模块 `app.deepseek.harness/bridge`。`cmd/dsh-bridge/main.go` 只处理命令行；`internal/config/` 负责配置及路由；`internal/auth/` 负责设备状态；`internal/upstream/` 负责内部认证及 HTTP；`internal/gateway/` 负责外层路由、转发和 WS 生命周期。
 
 Android 新建 `HarnessTransport.kt`、`DirectHarnessTransport.kt`、`BridgeHarnessTransport.kt`、`BridgeConnection.kt`、`BridgePairingClient.kt`、`ConnectionStore.kt`；修改 `HarnessApi.kt`、`HarnessRemoteMux.kt`、`MainActivity.kt`、`TaskMonitorService.kt`。设计交付放在 `docs/superpowers/designs/private-transport/`，验收放在 `docs/qa/private-transport/`。
 
@@ -253,7 +257,7 @@ val nonce = cipher.iv
 val encrypted = cipher.doFinal(profileJson.toByteArray(Charsets.UTF_8))
 ```
 
-Use ConnectionStore/factory in TaskMonitorService; service starts only with known profile. Close active mux when forgetting/changing a profile. Export via worker transport to app-private temporary ZIP then MediaStore Downloads on API 29+, or Storage Access Framework on API 26–28, deleting temporary files after completion/cancel. Remove DownloadManager direct URL usage for bridge. Disable official Web/advanced browser actions in bridge mode with a brief “在服务端电脑本地使用” explanation; do not construct random root Web URLs.
+Use ConnectionStore/factory in TaskMonitorService; service starts only with known profile. Close active mux when forgetting/changing a profile. Export via worker transport to app-private temporary ZIP then MediaStore Downloads on API 29+, or Storage Access Framework on API 26–28, deleting temporary files after completion/cancel. Remove DownloadManager direct URL usage for bridge. Disable official Web/advanced browser actions in bridge mode with a brief “在运行 dsh 服务端的电脑本地使用原生 Web” explanation; do not construct random root Web URLs.
 - [x] **Step 4: Run** `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug :app:lintRelease`. Expected: GREEN. Pixel checks in Task 8 cover actual Keystore and process restart.
 - [x] **Step 5: Commit Task 6 files** with message `feat: persist paired connections across foreground and background`.
 

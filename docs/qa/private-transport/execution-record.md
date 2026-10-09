@@ -1,4 +1,7 @@
 # SDD ledger — plan: docs/superpowers/plans/2026-10-09-private-transport.md
+
+Terminology (2026-10-10): bridge/custom transport server means **dshbridge**; upstream/native server means **dsh**. Task IDs, commands, test names and past review history below retain their recorded names. See [server roles](../../architecture/server-roles.md).
+
 Base: 28493e4; isolated branch codex/private-transport.
 Pre-flight: Tasks 1→3/4 config/routes; 2→3/4 device auth; 3→4 upstream headers; 5→6/7 transport/profile; 6→7 state/store; signatures consistent.
 Ruling: reuse existing managed worktree and new branch, preserve original checkout — no product differences found — cost if wrong: later file sync must reject concurrent changes.

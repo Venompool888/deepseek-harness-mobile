@@ -1,6 +1,8 @@
-# 私有通信壳验收 — 2026-10-10
+# dshbridge 与原生 dsh 服务端联调验收 — 2026-10-10
 
-本轮已实现服务端通信壳与 Android 原生客户端，兼容本机官方 dsh **0.2.0-rc.2**。验证对象是 macOS arm64 上的回环服务和 USB 连接的 Pixel 10；没有发布公网服务。真实随机路径、配对码、设备 token、dsh 登录 token 和认证状态均未放入仓库或交付包。
+本轮已实现 dshbridge 服务端与 Android 原生客户端，兼容本机官方 dsh **0.2.0-rc.2**。验证对象是 macOS arm64 上的回环服务和 USB 连接的 Pixel 10；没有发布公网服务。真实随机路径、配对码、设备 token、dsh 登录 token 和认证状态均未放入仓库或交付包。
+
+本文 **dsh 服务端**指原生任务/会话/模型/Web 服务，**dshbridge 服务端**指自研认证与转发通信壳。Go 测试和六种服务端构建产物属于 dshbridge；业务任务与原生协议验证使用 dsh。两者职责、参数及凭据的区分见 [服务端职责说明](../../architecture/server-roles.md)。
 
 ## 环境与自动检查
 
@@ -13,14 +15,14 @@
 | `:app:lintDebug :app:lintRelease` | 0 错误；worktree 分别 76、78 个警告，同步后的原项目分别 77、79 个警告 |
 | `CGO_ENABLED=0`、`-trimpath` 六目标构建 | Windows/macOS/Linux，各 amd64/arm64；全部构建成功 |
 
-macOS arm64 程序实际运行过。其他五种程序只完成交叉编译，没有在目标系统运行；Windows 的账户 ACL 也未在这台 Mac 上验证。APK 是 `app.deepseek.harness.mobile.debug`，版本 1.1.0-debug / versionCode 6；原有 release 和旧包数据保留。
+macOS arm64 的 dshbridge 程序实际运行过。其他五种 dshbridge 程序只完成交叉编译，没有在目标系统运行；Windows 的账户 ACL 也未在这台 Mac 上验证。APK 是 `app.deepseek.harness.mobile.debug`，版本 1.1.0-debug / versionCode 6；原有 release 和旧包数据保留。
 
 同步回原项目后再次通过全部 Go race/vet、88 项 Android 测试、Debug 构建和两种 lint。原目录保留的 `mipmap-anydpi-v26` 资源额外产生一项 ObsoleteSdkInt 警告，本轮没有修改这份既有资源。最终交付 APK 与 Pixel 上安装的 base.apk 通过 SHA-256 一致性核验。
 
 ## 协议、认证和入口
 
 - 初始化生成四条独立的至少 128 位随机路径，持久保存在私有 `routes.json`；重启不旋转，缺失或损坏时拒绝启动。路径资料拒绝编码、点段、反斜线、跨 origin 和重复映射。
-- 十分钟一次性配对码与 256 位设备 token；服务端只持久保存摘要。并发兑换只有一次成功，持久化失败不返回凭据；独立 CLI 撤销跨进程生效。
+- 十分钟一次性配对码与 256 位设备 token；dshbridge 服务端只持久保存摘要。并发兑换只有一次成功，持久化失败不返回凭据；独立 CLI 撤销跨进程生效。
 - 原始 dsh RPC 信封与 Remote mux 帧通过明确 allowlist 转发；内部 cookie 和外部设备 token 分离。上游固定回环地址，不跟随重定向，不接受客户端提供的目标。
 - HTTPS/WSS 集成测试使用可信测试证书进行真实 TLS 握手；无效/撤销凭据与错误路径返回空 404，上游不可用返回桥接错误。产品没有关闭证书校验。
 - 本机九组匿名请求：根路径、原生 RPC、固定 RPC、原生 WS、实际随机 RPC/stream/export、畸形匿名 RPC、匿名 WS upgrade，全部为 404 / 0 字节，没有 Set-Cookie、Location 或 Server 头。别名结果保存在 [anonymous-results.json](anonymous-results.json)。`TestAnonymousNeverReachesUpstream` 同时证明匿名请求不会触达上游。
@@ -36,13 +38,13 @@ macOS arm64 程序实际运行过。其他五种程序只完成交叉编译，�
 | --- | --- |
 | 新设备配对、历史与模型列表 | 配对成功，数据正常加载 |
 | 原生发送与流式回复 | 专用 `Private transport Pixel QA` 会话得到 `PRIVATE_PIXEL_OK`，恢复 Connected |
-| 停止正在运行的任务 | 原生 Stop 生效，服务端 running=false |
+| 停止正在运行的任务 | 原生 Stop 生效，dsh 服务端 running=false |
 | 工具批准 | Allow once 后受控临时文件得到准确测试内容 |
 | 工具拒绝 | Reject 后任务报告拒绝，目标文件没有创建 |
 | Home 后后台完成 | 本包通知从运行状态变为 `Completed · Private transport Pixel QA` |
 | 会话 ZIP 导出 | 系统文件选择器写入 Downloads；15900 字节、1 个条目、CRC 正常，包含测试回复 |
 | 强制停止与重启 | Keystore 保存的私有连接恢复，无需重新配对 |
-| 通信壳中断与恢复 | 未发送成功的草稿保留；恢复后仍为 4 turns、无待提交消息，没有重复发送 |
+| dshbridge 中断与恢复 | 未发送成功的草稿保留；恢复后仍为 4 turns、无待提交消息，没有重复发送 |
 | 撤销与重新配对 | 显示设备授权不可用，未进入 Web 登录或直连；新配对恢复同一 QA 会话 |
 | 配对码字段 | 真机先发现明文显示，修复后 password=true 且层级中无明文码；禁用 autofill 和输入状态保存 |
 | 配对恢复界面 | 已打开的配对表单不会被重复的设备授权提示盖住 |
@@ -54,7 +56,7 @@ macOS arm64 程序实际运行过。其他五种程序只完成交叉编译，�
 - [真实审批卡片](pixel-private-approval.png)
 - [150% 字体配对页](pixel-pair-font150-top.png)、[滚动后的主操作](pixel-pair-font150-bottom.png)、[键盘打开时的主操作](pixel-pair-font150-keyboard.png)
 
-测试结束移除临时 USB 3090 reverse，恢复原输入法和 100% 字体，关闭本轮启动的测试服务。手机保存的是本机测试 origin；正式使用需要导入实际部署的 HTTPS 配置并配对。
+测试结束移除临时 USB 3090 reverse，恢复原输入法和 100% 字体，关闭本轮启动的测试服务。手机保存的是本机测试 origin；正式使用需要导入实际部署的 dshbridge HTTPS 配置并配对。
 
 ## 独立审查与回归
 
@@ -87,7 +89,7 @@ macOS arm64 程序实际运行过。其他五种程序只完成交叉编译，�
 
 ## 设计与交付
 
-连接页设计使用用户指定的 [agy-subagent 技能](/Users/yuri/.codex/skills/agy-subagent/SKILL.md)。AGY 在隔离目录交付 [设计说明](../../superpowers/designs/private-transport/agy-design.md) 与 [交互预览](../../superpowers/designs/private-transport/agy-preview.html)，没有修改服务端或 Android 协议代码。最终结果核验 SUCCESS、0 step errors、无 denied actions；任务专属权限已移除。
+连接页设计使用用户指定的 [agy-subagent 技能](/Users/yuri/.codex/skills/agy-subagent/SKILL.md)。AGY 在隔离目录交付 [设计说明](../../superpowers/designs/private-transport/agy-design.md) 与 [交互预览](../../superpowers/designs/private-transport/agy-preview.html)，没有修改 dshbridge 服务端或 Android 协议代码。最终结果核验 SUCCESS、0 step errors、无 denied actions；任务专属权限已移除。
 
 程序与 APK 是本地构建交付。使用 [bridge/README.md](../../../bridge/README.md) 中的 init / pair / serve / devices / revoke 命令维护。私有 state 必须独立保存并备份；交付包不含任何测试 state。保留 `codex/private-transport` 分支和 worktree，没有自动 merge、push 或公网发布。
 

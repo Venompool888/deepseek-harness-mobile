@@ -1,6 +1,23 @@
-# Private dsh transport
+# dshbridge server
 
-This service exposes its own authenticated transport while dsh remains bound to loopback. It preserves dsh 0.2.0-rc.2 message formats. Random routes are stable deployment configuration, not an authentication substitute.
+**dshbridge** is our transport server. **dsh server** means the native DeepSeek Harness server. The current design runs these two separate components on the same host: Android connects to dshbridge over HTTPS/WSS; dshbridge forwards supported dsh messages to the loopback dsh server. dsh executes tasks, calls models and owns sessions/workspaces and the native Web interface. dshbridge owns device pairing, authentication, revocation and random route mappings.
+
+The component name is **dshbridge**; the existing CLI/executable name is `dsh-bridge`, with sources under `bridge/cmd/dsh-bridge/`. Command examples below use that existing name. See [server roles and terminology](../docs/architecture/server-roles.md).
+
+dshbridge preserves dsh 0.2.0-rc.2 message formats. Random routes are stable dshbridge deployment configuration, not an authentication substitute. Its pairing codes/device tokens are separate from the native dsh launch token/Cookie. The dshbridge outer protocol version (`protocolVersion: 1`) is separate from the native dsh software version.
+
+## Addresses and credentials
+
+| Setting | Component |
+| --- | --- |
+| `--upstream` | Native dsh server's loopback origin |
+| `--public-origin`, phone configuration `origin` | dshbridge server's client-facing origin; public deployment requires HTTPS |
+| `--dsh-token-file` | Native dsh launch token used internally by dshbridge |
+| `pair`, `devices`, `revoke`, device token, `routes.json` | dshbridge device access and random routes |
+
+Start the loopback dsh server, then configure/start dshbridge and pair the phone. The two processes are maintained separately; dshbridge does not manage the dsh process. Private server mode in Android means dshbridge; Direct connection means native dsh. Native Web management is accessed locally on the dsh server host.
+
+## Build and initialize dshbridge
 
 Build with Go 1.26 or newer: `go build ./cmd/dsh-bridge`.
 
@@ -51,6 +68,6 @@ The HTTP server configures a 16 KiB MaxHeaderBytes setting and a ten-second head
 
 Each request/frame validates its credential. Idle WS revocation checks run every 250 ms. An operation already accepted by dsh cannot be rolled back by deleting the external credential. Device revocation is local administration; the public transport cannot create arbitrary upstream destinations or administrative endpoints.
 
-Android's Private server mode is the default pairing flow; Direct connection remains available for explicit local/native connections. Forgetting a private profile invalidates its work and credentials and requires fresh pairing. Export uses the system file picker on every supported Android version. Web management stays on the server computer in private mode. A failed private connection never falls back to native dsh routes.
+Android's Private server mode is the default pairing flow; Direct connection remains available for explicit local/native connections. Forgetting a private profile invalidates its work and credentials and requires fresh pairing. Export uses the system file picker on every supported Android version. Native dsh Web management stays on the dsh server host in private mode. A failed private connection never falls back to native dsh routes.
 
-No public domain, certificate, reverse proxy, firewall rule, installer, or process supervisor is provisioned by this repository. Deploy the bridge with your own trusted TLS certificate or an isolated TLS reverse proxy, and keep the dsh listener on loopback. External exposure still needs to be verified on that actual host.
+No public domain, certificate, reverse proxy, firewall rule, installer, or process supervisor is provisioned by this repository. Deploy dshbridge with your own trusted TLS certificate or an isolated TLS reverse proxy, and keep the native dsh server listener on loopback. External exposure still needs to be verified on that actual host.
