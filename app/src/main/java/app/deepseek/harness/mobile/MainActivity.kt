@@ -16,6 +16,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.InsetDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -661,7 +662,7 @@ class MainActivity : ComponentActivity() {
         pendingAttentionButton = approvalButton("", false, true) { showSessions() }.apply {
             visibility = View.GONE
             setTextColor(COLOR_AMBER)
-            background = ripple(roundedStroke(COLOR_CODE_SURFACE, COLOR_AMBER, 12f))
+            background = ripple(roundedStroke(COLOR_CODE_SURFACE, palette.approvalBorder, 12f))
             contentDescription = tr("查看其他会话的待处理请求", "Review pending requests in other sessions")
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
@@ -816,7 +817,7 @@ class MainActivity : ComponentActivity() {
         val card = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(6))
-            background = roundedStroke(COLOR_COMPOSER, COLOR_BORDER_SUBTLE, 22f)
+            background = roundedStroke(COLOR_COMPOSER, COLOR_BORDER_SUBTLE, 28f)
             elevation = dp(2).toFloat()
         }
         normalComposerCard = card
@@ -845,9 +846,9 @@ class MainActivity : ComponentActivity() {
         }
         toolbar.addView(ImageButton(this@MainActivity).apply {
             setImageResource(R.drawable.ic_add_outline)
-            imageTintList = ColorStateList.valueOf(COLOR_CONTROL_TEXT)
-            setPadding(dp(11), dp(11), dp(11), dp(11))
-            background = ripple(rounded(COLOR_MENU_SELECTED, 20f))
+            imageTintList = ColorStateList.valueOf(COLOR_TEXT)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = ripple(InsetDrawable(rounded(COLOR_CONTROL, 14f), dp(10)))
             contentDescription = tr("命令", "Commands")
             isClickable = true
             isFocusable = true
@@ -888,13 +889,12 @@ class MainActivity : ComponentActivity() {
         toolbar.addView(modelButton, LinearLayout.LayoutParams(dp(116), dp(48)))
         sendButton = ImageButton(this@MainActivity).apply {
             setImageResource(R.drawable.ic_send_harness)
-            imageTintList = ColorStateList.valueOf(Color.WHITE)
-            setPadding(dp(13), dp(13), dp(13), dp(13))
-            background = ripple(rounded(COLOR_BLUE, 24f))
+            scaleType = ImageView.ScaleType.CENTER
             contentDescription = tr("发送消息", "Send message")
             isClickable = true
             setOnClickListener { if (currentSession?.running == true) cancelCurrent() else sendPrompt() }
         }
+        applySendButtonVisual(enabled = false)
         toolbar.addView(sendButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         card.addView(toolbar, LinearLayout.LayoutParams(MATCH, WRAP))
         composerSeat = LinearLayout(this@MainActivity).apply {
@@ -1046,7 +1046,7 @@ class MainActivity : ComponentActivity() {
 
     private fun buildQuestionCard(question: PendingQuestion): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundedStroke(COLOR_CODE_SURFACE, COLOR_BORDER, 16f)
+        background = roundedStroke(COLOR_COMPOSER, COLOR_BORDER, 20f)
         val enabled = question.key !in interactionResponding && api.hasLiveConnection()
         val isPlan = question.questions.any { it.intentKind == "plan-review" }
         addView(interactionText(if (isPlan) tr("等待计划确认", "Waiting for plan review") else tr("等待你的回答", "Waiting for your answer")).apply {
@@ -1247,8 +1247,8 @@ class MainActivity : ComponentActivity() {
 
     private fun buildApprovalCard(approval: HarnessApi.PendingApproval): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = rounded(COLOR_CODE_SURFACE, 20f)
-        foreground = roundedStroke(Color.TRANSPARENT, COLOR_AMBER, 20f)
+        background = rounded(COLOR_COMPOSER, 20f)
+        foreground = roundedStroke(Color.TRANSPARENT, palette.approvalBorder, 20f)
         clipToOutline = true
 
         addView(LinearLayout(this@MainActivity).apply {
@@ -1320,10 +1320,10 @@ class MainActivity : ComponentActivity() {
         textSize = 14f
         gravity = Gravity.CENTER
         isEnabled = enabledNow
-        alpha = if (enabledNow) 1f else .55f
+        alpha = if (enabledNow) 1f else .4f
         setTextColor(if (primary) palette.primaryButtonText else COLOR_TEXT)
-        background = if (primary) rounded(palette.primaryButtonFill, 22f)
-        else roundedStroke(Color.TRANSPARENT, COLOR_BORDER, 22f)
+        background = ripple(if (primary) rounded(palette.primaryButtonFill, 12f)
+        else roundedStroke(Color.TRANSPARENT, COLOR_BORDER, 12f))
         setOnClickListener { if (isEnabled) action() }
     }
 
@@ -2980,13 +2980,13 @@ class MainActivity : ComponentActivity() {
         val feedback = messageFeedback[footer.messageId]
         val pending = footer.messageId in feedbackPending
         addIcon(assistantActionButton(
-            R.drawable.ic_like_outline_16,
+            if (feedback?.rating == "positive") R.drawable.ic_like_fill_16 else R.drawable.ic_like_outline_16,
             if (feedback?.rating == "positive") tr("取消标记", "Remove rating") else tr("好的回答", "Good response"),
             selected = feedback?.rating == "positive",
             pending = pending,
         ) { toggleMessageFeedback(footer.messageId, "positive") }, 10)
         addIcon(assistantActionButton(
-            R.drawable.ic_dislike_outline_16,
+            if (feedback?.rating == "negative") R.drawable.ic_dislike_fill_16 else R.drawable.ic_dislike_outline_16,
             if (feedback?.rating == "negative") tr("取消标记", "Remove rating") else tr("有问题的回答", "Bad response"),
             selected = feedback?.rating == "negative",
             pending = pending,
@@ -3038,7 +3038,7 @@ class MainActivity : ComponentActivity() {
         imageTintList = ColorStateList.valueOf(if (selected) COLOR_TEXT else COLOR_MUTED)
         scaleType = ImageView.ScaleType.CENTER
         setPadding(dp(14), dp(14), dp(14), dp(14))
-        background = ripple(rounded(Color.TRANSPARENT, 24f))
+        background = ripple(rounded(Color.TRANSPARENT, 8f))
         contentDescription = description
         isClickable = !pending
         isFocusable = !pending
@@ -3790,9 +3790,14 @@ class MainActivity : ComponentActivity() {
         val hasDraft = composer.text?.isNotBlank() == true
         val enabled = running || (composer.isEnabled && hasDraft)
         sendButton.isEnabled = enabled
-        sendButton.alpha = 1f
-        sendButton.imageTintList = ColorStateList.valueOf(if (enabled) Color.WHITE else COLOR_SEND_DISABLED_ICON)
-        sendButton.background = rounded(if (enabled) COLOR_BLUE else COLOR_SEND_DISABLED, 22f)
+        applySendButtonVisual(enabled)
+    }
+
+    private fun applySendButtonVisual(enabled: Boolean) {
+        if (!::sendButton.isInitialized) return
+        sendButton.alpha = if (enabled) 1f else .4f
+        sendButton.imageTintList = ColorStateList.valueOf(Color.WHITE)
+        sendButton.background = ripple(InsetDrawable(rounded(COLOR_BLUE, 17f), dp(7)))
     }
 
     private fun showSessions() {

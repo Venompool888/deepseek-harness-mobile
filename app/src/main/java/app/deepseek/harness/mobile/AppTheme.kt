@@ -57,11 +57,12 @@ internal data class AppPalette(
     val red: Int,
     val primaryButtonFill: Int,
     val primaryButtonText: Int,
+    val approvalBorder: Int,
 )
 
 internal object AppPalettes {
     val DARK = AppPalette(
-        surface = color(0, 0, 0),
+        surface = color(21, 21, 23),
         drawer = color(27, 27, 28),
         drawerButton = color(67, 69, 74),
         drawerBorder = color(90, 91, 95),
@@ -69,17 +70,17 @@ internal object AppPalettes {
         drawerPrimary = color(249, 250, 251),
         drawerSecondary = color(207, 211, 214),
         drawerTertiary = color(173, 178, 184),
-        drawerBlue = color(103, 158, 254),
-        composer = color(33, 33, 33),
+        drawerBlue = color(122, 170, 255),
+        composer = color(44, 44, 46),
         codeSurface = color(24, 24, 26),
-        control = color(28, 28, 28),
-        controlText = color(214, 214, 214),
+        control = color(53, 54, 56),
+        controlText = color(207, 211, 214),
         webSettings = color(46, 46, 49),
         webSettingsBorder = color(62, 62, 65),
         selected = color(38, 38, 38),
-        userBubble = color(47, 47, 47),
-        text = color(244, 244, 244),
-        muted = color(171, 171, 171),
+        userBubble = color(44, 44, 46),
+        text = color(249, 250, 251),
+        muted = color(173, 178, 184),
         border = color(76, 76, 76),
         borderSubtle = color(62, 62, 62),
         tool = color(30, 30, 30),
@@ -90,15 +91,16 @@ internal object AppPalettes {
         notice = color(63, 48, 20),
         inlineCode = color(38, 38, 38),
         green = color(91, 207, 139),
-        blue = color(82, 139, 255),
+        blue = color(122, 170, 255),
         sendDisabled = color(55, 68, 94),
         sendDisabledIcon = color(145, 148, 154),
         activity = color(190, 193, 199),
-        amber = color(251, 191, 36),
-        approvalStrip = color(39, 35, 24),
+        amber = color(245, 158, 11),
+        approvalStrip = color(39, 36, 31),
         red = color(248, 113, 113),
-        primaryButtonFill = color(246, 246, 246),
-        primaryButtonText = color(24, 24, 24),
+        primaryButtonFill = color(249, 250, 251),
+        primaryButtonText = color(15, 17, 21),
+        approvalBorder = color(247, 173, 49),
     )
 
     // Harness Web light tokens: white base/layers, bluish neutral hierarchy,
@@ -142,6 +144,7 @@ internal object AppPalettes {
         red = color(236, 19, 19),
         primaryButtonFill = color(15, 17, 21),
         primaryButtonText = color(255, 255, 255),
+        approvalBorder = color(247, 173, 49),
     )
 
     private fun color(red: Int, green: Int, blue: Int): Int =
