@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="material_primary">#AFC6FF</color>
+    <color name="material_on_primary">#002E69</color>
+    <color name="material_primary_container">#16468F</color>
+    <color name="material_on_primary_container">#D9E2FF</color>
+    <color name="material_surface">#000000</color>
+    <color name="material_surface_container">#1C1C1C</color>
+    <color name="material_on_surface">#F4F4F4</color>
+    <color name="material_on_surface_variant">#C4C6CC</color>
+    <color name="material_outline">#8E9096</color>
+    <color name="material_error">#FFB4AB</color>
+    <color name="material_on_error">#690005</color>
+</resources>

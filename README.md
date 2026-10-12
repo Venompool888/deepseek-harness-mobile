@@ -1,4 +1,6 @@
 <p align="center">
+
+> 2026-10-10 本机开发进展：Android `1.1.2-debug` 已安装到 Pixel，保留 rc.2 审批/问答，并按 Web 源码校准 15 个图标、按钮和卡片。详见 [前端源码导读](docs/architecture/dsh-web-frontend.md)、[视觉验收](docs/qa/web-visual-fidelity/validation.md) 与 [此前交互验收](docs/qa/interaction-parity/validation.md)。下面的发布下载说明对应已发布的 v1.1.0；1.1.2 为本机 Debug 交付。
   <img src="design/android-whale-logo-white.png" width="260" alt="DeepSeek Harness Mobile logo">
 </p>
 
@@ -11,6 +13,19 @@
 <p align="center">
   <a href="https://github.com/Venompool888/deepseek-harness-mobile/releases/latest"><strong>下载最新版 APK</strong></a>
 </p>
+
+## 两个服务端：dsh 与 dshbridge
+
+本项目明确区分 **dsh 服务端**和 **dshbridge 服务端**：
+
+| 名称 | 职责 | Android 连接方式 |
+| --- | --- | --- |
+| **dsh 服务端** | DeepSeek Harness 原生服务，执行任务、调用模型、管理会话和工作区，提供原生 Web | “直接连接”使用其地址或原生 dsh 登录链接 |
+| **dshbridge 服务端** | 我们开发的通信壳，负责设备配对、认证、撤销、随机入口和 dsh 协议转发 | 本轮本地开发版的“私有服务”使用其 HTTPS 配置与配对码 |
+
+私有连接链路是 **Android App → dshbridge 服务端 → 回环 dsh 服务端**。当前部署方案让两个独立服务在同一台主机运行，公网入口指向 dshbridge。配对码、设备 token 和 `routes.json` 属于 dshbridge；dsh 启动 token 与 Cookie 用于内部上游认证。
+
+dshbridge 的现有 CLI 文件名为 `dsh-bridge`。完整职责、参数、版本与部署边界见 [两个服务端的区分](docs/architecture/server-roles.md)，操作命令见 [dshbridge README](bridge/README.md)。本轮已完成本机联调，正式公网部署另行配置。
 
 ## 不只是聊天：在手机上看着 Agent 干活
 
@@ -73,9 +88,11 @@
 
 ## 首次连接
 
+以下是已发布版本的原生 dsh 直连流程。支持 dshbridge 的本轮本地开发版在“私有服务”中导入 dshbridge 配置并输入配对码，详见 [服务端与连接模式说明](docs/architecture/server-roles.md)。
+
 首次打开时，应用不会预置任何服务器地址：
 
-1. 输入你自己的 Harness 服务器地址，例如 `https://harness.example.com`。
+1. 输入你自己的原生 dsh 服务端地址，例如 `https://harness.example.com`。
 2. 点击 **测试并连接**。
 3. 如果服务器启用了 Cloudflare Access，请在出现的登录页中完成服务器所有者配置的验证方式。
 4. 如果 Harness 显示 **Internal Testing Notice**，点击 **Continue**。

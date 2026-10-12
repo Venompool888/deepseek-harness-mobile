@@ -6,7 +6,7 @@
             android:exported="true"
             android:permission="android.permission.DUMP">
             <intent-filter>
-                <action android:name="cool.rin.deepseekremote.DEBUG_NOTIFICATION" />
+                <action android:name="app.deepseek.harness.mobile.DEBUG_NOTIFICATION" />
             </intent-filter>
         </receiver>
     </application>

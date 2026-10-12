@@ -1,9 +1,7 @@
+<!-- dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconSearchOutlineArtwork; source geometry retained. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="14dp"
-    android:height="14dp"
-    android:viewportWidth="16"
-    android:viewportHeight="16">
-    <path
-        android:fillColor="@android:color/white"
-        android:pathData="M11.895,6.647C11.895,3.725 9.534,1.357 6.623,1.357C3.712,1.357 1.352,3.725 1.352,6.647C1.352,9.569 3.712,11.938 6.623,11.938C9.534,11.938 11.895,9.569 11.895,6.647ZM13.245,6.647C13.245,10.318 10.28,13.294 6.623,13.294C2.966,13.294 0,10.318 0,6.647C0,2.977 2.966,0 6.623,0C10.281,0 13.245,2.977 13.245,6.647ZM16,15.041L15.044,16L11.53,12.474L12.486,11.514L16,15.041Z" />
+    android:width="14dp" android:height="14dp"
+    android:viewportWidth="16" android:viewportHeight="16">
+    <path android:pathData="M6.58727 11.8586C9.55061 11.8586 11.9529 9.45637 11.9529 6.49304C11.9529 3.5297 9.55061 1.12744 6.58727 1.12744C3.62394 1.12744 1.22168 3.5297 1.22168 6.49304C1.22168 9.45637 3.62394 11.8586 6.58727 11.8586Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1" />
+    <path android:pathData="M10.2991 10.3933L14.7783 14.8725" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1" />
 </vector>

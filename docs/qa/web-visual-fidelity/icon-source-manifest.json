@@ -1,0 +1,167 @@
+[
+  {
+    "resource": "ic_sidebar_outline.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconPanelLeftOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "aac9da65d56a98a5e93f0056fda0fa22b18b59f9dddbe6200c2b6cf8890c0732"
+  },
+  {
+    "resource": "ic_new_session_harness.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/shared-artwork.tsx NewChatOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1.3,
+    "sha256": "7cd360226b0b3f282fa9d838af8f860a72e2a67e8d6198b7ea675b88e6956eca"
+  },
+  {
+    "resource": "ic_search_outline.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconSearchOutlineArtwork",
+    "intrinsicDp": 14,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "73b6833589c9a2a0a2fa51121d31494e6787fa33644aa4c566cf5d153bbbc26b"
+  },
+  {
+    "resource": "ic_settings_outline.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconSettingsOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1.3,
+    "sha256": "8e24a48c42c53c5940f1257680023f4e1d3592cc51eae4d96755b4ab69ea44b7"
+  },
+  {
+    "resource": "ic_add_outline.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconPlusOutlineArtwork",
+    "intrinsicDp": 14,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1.3,
+    "sha256": "16d9e0c3550452b79607dc8c18dec5d05882d2267657ed9b5ab3691af86a34a5"
+  },
+  {
+    "resource": "ic_copy_outline_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconCopyOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "6fcd49f42adc33b3f557d905f855c3b21791f75d22e69f5b885605c450d65b1f"
+  },
+  {
+    "resource": "ic_check_outline_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconCheckOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "414bd9f968ca0f39cefdd9f15b557eac04e74d2fcabf11423115c81390efdacb"
+  },
+  {
+    "resource": "ic_like_outline_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconLikeOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "a9a5f517318c4d47f0da2409d882f146c69756624c451c288b32286a94353463"
+  },
+  {
+    "resource": "ic_dislike_outline_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconDislikeOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "4dfc2756e3471170e81132a462d9e971671d47cf4652f87245d41a2d814f5610"
+  },
+  {
+    "resource": "ic_like_fill_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconLikeFillArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "86ebbd7585efaf5d8f525c7fedfa270cecce3b3c3114afbf5e7dba0ae2c52e48"
+  },
+  {
+    "resource": "ic_dislike_fill_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconDislikeFillArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "c2249728fa40a751b6bd9ce211dd72edccbd0aa5e5faae3cebfc9117550b9671"
+  },
+  {
+    "resource": "ic_branch_outline_16.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconBranchOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "38743dd5d618b157acd44f3cfdd88ce04cd6315677872565b5b07c8a5503597d"
+  },
+  {
+    "resource": "ic_think_harness.xml",
+    "source": "dsh-v0.2.0-rc.2 ui-primitives/icons/index.tsx IconThinkOutlineArtwork",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 1,
+    "sha256": "783bd58efd3cad00cb719ccf9d868c424c28e71e7001dcf88239092f06586502"
+  },
+  {
+    "resource": "ic_send_harness.xml",
+    "source": "dsh-v0.2.0-rc.2 InputBar.tsx send",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 0,
+    "sha256": "da254bb9234b0d6c100165fab4a66bb1106bf6ffaa80cc324fee212c9c6e5a0e"
+  },
+  {
+    "resource": "ic_stop_square.xml",
+    "source": "dsh-v0.2.0-rc.2 InputBar.tsx stop",
+    "intrinsicDp": 16,
+    "viewport": [
+      "16",
+      "16"
+    ],
+    "stroke": 0,
+    "sha256": "bff78c21bc1c9e49bd4d1011e6162e664314ff383e346c8d9b87feb0f5560c02"
+  }
+]

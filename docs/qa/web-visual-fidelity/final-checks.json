@@ -1,0 +1,56 @@
+{
+  "suites": 23,
+  "tests": 96,
+  "failures": 0,
+  "errors": 0,
+  "lint": {
+    "warnings": 84,
+    "errors": 0
+  },
+  "sourceTag": "dsh-v0.2.0-rc.2",
+  "sourceArchiveSha256": "c126f2f5dc56820e62d07e52eba6455cc20fffb379fc876626993452d86d4010",
+  "geminiModel": "gemini-3.1-pro-high",
+  "geminiConversation": "e6a9c6a7-4a70-407d-8ac5-418a2e792e57",
+  "version": "1.1.2-debug",
+  "versionCode": 8,
+  "sourceCommit": "dcf3c18b27de3acb6d5658c634f2bb01f05a7a66",
+  "apks": {
+    "standard": {
+      "sha256": "29e26886bcb608c07a9b7bcea5cfdc404fdb6335f54303f43a8b5631612e770c",
+      "bytes": 9168861,
+      "MITLicenseIncluded": true
+    },
+    "lan": {
+      "sha256": "6e3865429449d15206044b951a9af0a460e915df2a47db71ee4e97423933a268",
+      "bytes": 10753827,
+      "MITLicenseIncluded": true
+    }
+  },
+  "licenseInBothAPKs": true,
+  "pixel": {
+    "package": "app.deepseek.harness.mobile.debug",
+    "version": "1.1.2-debug",
+    "versionCode": 8,
+    "device": "Pixel 10",
+    "fontScaleRestored": 1.0,
+    "themeRestored": "Dark",
+    "inputMethodUnchanged": true,
+    "adbReverseEmpty": true,
+    "bridgePid": 76177,
+    "upstream": "http://127.0.0.1:19387",
+    "LANPeer": "192.168.10.105",
+    "syntheticOutcomes": 4,
+    "allOutcomesMatchedPending": true,
+    "syntheticPendingRemaining": 0,
+    "checks": [
+      "real Desktop reconnect",
+      "normal message icons",
+      "empty and populated send appearance",
+      "IME-visible composer",
+      "commands menu",
+      "dark approval and question",
+      "light approval and question",
+      "dark approval at 150 percent font"
+    ]
+  }
+}

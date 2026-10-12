@@ -8,15 +8,15 @@ val releaseKeyAlias = providers.environmentVariable("DEEPSEEK_RELEASE_KEY_ALIAS"
 val releaseKeyPassword = providers.environmentVariable("DEEPSEEK_RELEASE_KEY_PASSWORD").orNull
 
 android {
-    namespace = "cool.rin.deepseekremote"
+    namespace = "app.deepseek.harness.mobile"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "cool.rin.deepseekremote"
+        applicationId = "app.deepseek.harness.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.1.0"
+        versionCode = 8
+        versionName = "1.1.2"
     }
 
     buildFeatures {
@@ -66,6 +66,12 @@ android {
 }
 
 dependencies {
+    implementation("androidx.activity:activity:1.11.0")
+    implementation("androidx.browser:browser:1.9.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("androidx.webkit:webkit:1.17.0")
+    implementation("com.google.android.material:material:1.14.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

@@ -22,3 +22,7 @@ test-fixtures/
 
 # Local Android release signing material
 signing/
+
+# Private transport deployment state and build output
+bridge/dist/
+bridge/state/

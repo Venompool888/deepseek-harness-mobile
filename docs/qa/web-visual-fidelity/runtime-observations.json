@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-10",
+  "source": "DOM getComputedStyle and rendered SVG inspection on existing local rc.2 Web at 127.0.0.1:3080; no user chat copied",
+  "dark": {
+    "bgBase": "#151517",
+    "labelPrimary": "#f9fafb",
+    "labelSecondary": "#cfd3d6",
+    "labelTertiary": "#adb2b8",
+    "brandPrimary": "#f9fafb",
+    "buttonPrimaryFill": "#f9fafb",
+    "buttonInfoFill": "#7aaaff",
+    "inputMajor": "#2c2c2e",
+    "warnPrimary": "#f59e0b",
+    "warnSecondary": "#f7ad31",
+    "warnTertiary": "#27241f"
+  },
+  "controls": {
+    "sidebarToggle": {"visualSize": 28, "radius": 8, "glyphSize": 16, "stroke": 1},
+    "newSession": {"height": 38, "radius": 12, "border": "0.5px solid rgba(255,255,255,0.16)", "glyphSize": 14, "stroke": 1.3},
+    "messageAction": {"visualSize": 28, "radius": 8, "padding": 6, "glyphSize": 16, "disabledOpacity": 0.4},
+    "composerAdd": {"visualSize": 28, "shape": "circle", "fill": "#353638", "glyphSize": 14, "stroke": 1.3},
+    "permission": {"height": 28, "radius": 8, "color": "#cfd3d6", "fontSize": 13, "fontWeight": 500, "glyphSize": 16},
+    "model": {"height": 28, "radius": 8, "color": "#cfd3d6", "fontSize": 13, "glyphSize": 16},
+    "send": {"visualSize": 34, "shape": "circle", "fill": "#7aaaff", "glyphColor": "#ffffff", "glyphSize": 16, "emptyOpacity": 0.4}
+  },
+  "boundary": "These are desktop CSS px visual sizes; Android must keep at least 48dp interactive targets and adapt for large fonts/IME. Current Web version, not a claim that all future versions match."
+}

@@ -1,0 +1,12 @@
+{
+  "standard": {
+    "sha256": "29e26886bcb608c07a9b7bcea5cfdc404fdb6335f54303f43a8b5631612e770c",
+    "bytes": 9168861,
+    "MITLicenseIncluded": true
+  },
+  "lan": {
+    "sha256": "6e3865429449d15206044b951a9af0a460e915df2a47db71ee4e97423933a268",
+    "bytes": 10753827,
+    "MITLicenseIncluded": true
+  }
+}
