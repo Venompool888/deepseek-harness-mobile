@@ -94,6 +94,47 @@ class HarnessNativeTransportTest {
         }
     }
 
+    @Test fun lostReceiptRetryAcrossSessionsHasOneAdmissionPerSession() {
+        ServerSocket(0).use { host ->
+            val root = "http://127.0.0.1:${host.localPort}"
+            val admissions = mutableMapOf<String, MutableSet<String>>()
+            val finished = CompletableFuture<Unit>()
+            val worker = Thread {
+                try {
+                    repeat(3) { index -> host.accept().use { socket ->
+                        val reader = socket.getInputStream().bufferedReader()
+                        reader.readLine()
+                        val headers = readHeaders(reader)
+                        val body = CharArray(headers.getValue("content-length").toInt())
+                        readBody(reader, body)
+                        val envelope = JSONObject(String(body))
+                        val request = envelope.getJSONObject("payload").getJSONObject("args").getJSONObject("request")
+                        admissions.getOrPut(request.getString("sessionId")) { linkedSetOf() }
+                            .add(request.getString("requestId"))
+                        if (index == 0) {
+                            socket.getOutputStream().write("HTTP/1.1 500 Lost receipt\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                        } else respond(socket, envelope, JSONObject().put("accepted", true))
+                    } }
+                    finished.complete(Unit)
+                } catch (e: Throwable) { finished.completeExceptionally(e) }
+            }
+            worker.start()
+            val api = HarnessApi({ root }, cookieHeader = { null })
+            val submission = HarnessPromptSubmission()
+            val contentA = JSONArray().put(JSONObject().put("type", "text").put("text", "Unconfirmed draft A"))
+            val contentB = JSONArray().put(JSONObject().put("type", "text").put("text", "Unrelated draft B"))
+            val idA = submission.begin(root, "session-a", "Unconfirmed draft A", "queue")
+            assertThrows(java.io.IOException::class.java) { api.prompt("session-a", contentA, requestId = idA) }
+            val idB = submission.begin(root, "session-b", "Unrelated draft B", "queue")
+            api.prompt("session-b", contentB, requestId = idB)
+            submission.accepted(idB)
+            api.prompt("session-a", contentA, requestId = submission.begin(root, "session-a", "Unconfirmed draft A", "queue"))
+            finished.get(3, TimeUnit.SECONDS)
+            assertEquals(setOf(idA), admissions["session-a"])
+            assertEquals(setOf(idB), admissions["session-b"])
+        }
+    }
+
     private fun readHeaders(reader: java.io.BufferedReader): Map<String, String> = buildMap {
         while (true) {
             val line = reader.readLine() ?: break

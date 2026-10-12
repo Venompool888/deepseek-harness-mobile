@@ -63,6 +63,24 @@ class HarnessRc2Test {
         assertNotEquals(first, submission.begin("server", "session", "same text", "queue"))
     }
 
+    @Test fun unconfirmedDraftIdentitySurvivesUnrelatedSubmissions() {
+        val submission = HarnessPromptSubmission()
+        val first = submission.begin("server", "session-a", "unconfirmed draft", "queue")
+        val otherSession = submission.begin("server", "session-b", "other draft", "queue")
+        submission.accepted(otherSession)
+        assertEquals(first, submission.begin("server", "session-a", "unconfirmed draft", "queue"))
+
+        val otherServer = submission.begin("another-server", "session-a", "unconfirmed draft", "queue")
+        submission.accepted(otherServer)
+        assertEquals(first, submission.begin("server", "session-a", "unconfirmed draft", "queue"))
+
+        val editedDraft = submission.begin("server", "session-a", "edited draft", "queue")
+        submission.accepted(editedDraft)
+        assertEquals(first, submission.begin("server", "session-a", "unconfirmed draft", "queue"))
+        submission.accepted(first)
+        assertNotEquals(first, submission.begin("server", "session-a", "unconfirmed draft", "queue"))
+    }
+
     @Test fun harnessCookiesAreIsolatedByAuthority() {
         val a = harnessCookieName("http://localhost:3080")
         val b = harnessCookieName("http://localhost:8080")
